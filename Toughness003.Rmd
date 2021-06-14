@@ -1,0 +1,115 @@
+---
+title: "ToughnessDataAnalysis"
+author: "Lanya Ali, Nathan Switzner and Joel Anderson"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    theme: journal
+    number_sections: TRUE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+
+```
+
+```{r libraries}
+# load libraries ----------------------------------------------------------
+library(janitor)
+library(patchwork)
+library(tidyverse)
+library(readxl)
+library(lubridate)
+library(tune)
+library(tidymodels)
+library(gt)
+library(modelsummary)
+# library(ggplot2)
+
+theme_set(theme_bw(18, "serif")) #set theme to save typing
+```
+
+## Evaluation of uncertainty in conversions of Charpy transition temperature and upper shelf energy to account for differences in sample size and test temperature
+
+# load TIM  
+
+```{r TIM}
+#Data import from tim met
+TIM_CVN <- read_excel("timp_met_charpy_clean_rev02.xlsx",
+                          sheet = "Charpy")  %>%
+  clean_names() %>%
+  rename(
+    location = specimen_location,
+    temp_f = test_temperature_f,
+    charpy_thickness_mm = specimen_thickness_mm,
+    cvn_ss_ft_lbs = measured_energy_absorbed_ft_lbs,
+    sa_ss = shear_area_percent
+  ) %>%
+  mutate(across(temp_f:sa_ss, as.numeric), 
+         sa_ss = as.numeric(str_remove(string = sa_ss,pattern = c("<", ">")))) %>%
+  filter(str_detect(location, "Base Metal"),   #removing weld tests
+        str_detect(single_or_multiple_temperature_test, "Multiple"), #remove single temp tests
+        str_detect(full_transition_curve, "Yes"),
+         sa_ss<=100) %>% #removing shear areas greater than 100
+  select(id, bar_orientation, charpy_thickness_mm, temp_f, cvn_ss_ft_lbs, sa_ss)
+```
+```{r TIM}
+plots_shear_area <- function(id) {
+  TIM_CVN %>%
+    filter(.data$id == .env$id) %>%
+    ggplot() +
+    aes(temp_f, sa_ss) +
+    geom_point() +
+    ggtitle(paste("ID:",id)) +
+    xlab("Temperature (F)") +
+    ylab("Shear Area (subsize, %)") +
+    theme(plot.title.position = "plot")
+}
+```
+
+
+```{r TIM}
+#hyperbloic tanget function 
+func <- function( T, A, B, C, D) { A + B * tanh((T - D) / C)
+}
+
+A <- 19
+B <- 13
+C <- 30
+D <- 89
+T <- TIM_CVN$temp_f 
+
+func(T, A, B, C, D)
+```
+
+
+```{r TIM}}
+plots_CVN <- function(id) {
+  TIM_CVN %>%
+    filter(.data$id == .env$id) %>%
+    ggplot() +
+    aes(temp_f, cvn_ss_ft_lbs) +
+    geom_point() +
+    stat_function(fun = func, args(A, B, C, D))
+    ggtitle(paste("ID:",id)) +
+    xlab("Temperature (F)") +
+    ylab("CVN (subsize, ft_lbs)") +
+    theme(plot.title.position = "plot")
+}
+
+
+id <- unique(TIM_CVN$id)
+plots_shear_area_map <- map(id, plots_shear_area)
+plots_CVN_map <- map(id, plots_CVN)
+
+```
+
+```{r}
+plots_shear_area_map[1:4]
+plots_CVN_map[1:4]
+```
+```{r}
+
+```
