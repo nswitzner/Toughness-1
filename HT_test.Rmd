@@ -1,0 +1,360 @@
+---
+title: "HT Function"
+author: "RSI PIpeline Slutions"
+date: "6/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+## R Markdown
+
+```{r data}
+
+
+library(readxl)
+library(tidyverse)
+
+# Read data in
+tim_cvn <-
+  read_excel(
+    "MasterDB-SQL-2020-09-24.xlsx",
+    sheet = "Charpy"
+  ) %>% janitor::clean_names() %>%
+  filter(full_transition_curve=="TRUE") %>%
+  select(feature,
+         temperature_f,
+         absorbed_energy_ft_lbs) %>%
+  rename(t = temperature_f,
+         cvn = absorbed_energy_ft_lbs,
+         id = feature)
+
+ids <- unique(tim_cvn$id) #create vector of ids
+
+`%notin%` <- Negate(`%in%`) # not in special function
+
+# hyperbolic tangent function
+func <- function(t, A, B, C, D) {
+  A + B * tanh((t - D) / C)
+}
+
+## played around with A,B,C,D so that the function was
+## close for first few data points
+## then used this as starting points for nls
+Ai <- 19
+Bi <- 13
+Ci <- 30
+Di <- 89
+
+
+make_plot <- function(id) {
+  tim_cvn %>%
+    filter(.data$id == .env$id) %>%
+    ggplot(aes(t, cvn)) +
+    geom_point() +
+    stat_function(fun = func,
+                  args = list(Ai, Bi, Ci, Di)) +
+    theme_minimal() +
+    annotate(
+      "text",
+      x = min(data$t)+5,
+      y = max(data$cvn)-5,
+      label = paste("A =", Ai,
+                    ",B =", Bi,
+                    ",C =", Ci,
+                    ",D =", Di),
+      hjust = 0
+    ) +
+    labs(title = paste("ID =", ids[idx]))
+}
+
+
+```
+
+## plot 1
+Say something about plot 1
+
+```{r plot_1}
+idx <- 1 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) 
+
+Ai <- 19
+Bi <- 13
+Ci <- 30
+Di <- 89
+
+make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn ~ func(t, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+coefs <- coef(fit)
+
+
+
+data %>% 
+  # rename(t = temp) %>%
+  ggplot(aes(t, cvn)) +
+  geom_point() +
+  stat_function(fun = func,
+                args = list(Ai, Bi, Ci, Di)) +
+  theme_minimal() +
+  annotate(
+    "text",
+    x = min(data$t)+5,
+    y = max(data$cvn)-5 ,
+    label = paste("A =", round(coefs[1],1),
+                  ",B =", round(coefs[2],1),
+                  ",C =", round(coefs[3],1),
+                  ",D =", round(coefs[4],1)),
+    hjust = 0
+  ) +
+  labs(title = paste("ID =", ids[idx]))
+
+
+
+```
+
+
+## plot 2
+Say something about plot 2
+
+```{r plot_2}
+idx <- idx+1 #iterate index by 1
+
+badtemp <- c(120) # specify any bad temps to throw out
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx], t %notin% badtemp)
+
+Ai <- 19
+Bi <- 13
+Ci <- 30
+Di <- 89
+
+make_plot(ids[idx])
+
+fit <-
+  nls(
+    cvn ~ func(t, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+
+data %>% 
+  ggplot(aes(t, cvn)) +
+  geom_point() +
+  stat_function(fun = func,
+                args = list(Ai, Bi, Ci, Di)) +
+  theme_minimal() +
+  annotate(
+    "text",
+    x = min(data$t)-5,
+    y = max(data$cvn)-5,
+    label = paste("A =", round(coefs[1],1),
+                  ",B =", round(coefs[2],1),
+                  ",C =", round(coefs[3],1),
+                  ",D =", round(coefs[4],1)),
+    hjust = 0
+  ) +
+  labs(title = paste("ID =", ids[idx]))
+
+```
+
+## plot 3
+Say something about plot 3
+
+```{r plot_3}
+idx <- 3 #iterate index by 1
+
+badtemp <- c(110,140)
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx])
+
+Ai <- 30
+Bi <- 10
+Ci <- 70
+Di <- 80
+
+make_plot(ids[idx])
+
+fit <-
+  nls(
+    cvn ~ func(t, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ), trace = T
+  )
+coefs <- coef(fit)
+
+data %>% 
+  rename(t = temp) %>%
+  ggplot(aes(t, cvn)) +
+  geom_point() +
+  stat_function(fun = func,
+                args = list(Ai, Bi, Ci, Di)) +
+  theme_minimal() +
+  annotate(
+    "text",
+    x = min(t + 5),
+    y = max(data$cvn)-5,
+    label = paste("A =", round(coefs[1],1),
+                  ",B =", round(coefs[2],1),
+                  ",C =", round(coefs[3],1),
+                  ",D =", round(coefs[4],1)),
+    hjust = 0
+  ) +
+  labs(title = paste("ID =", ids[idx]))
+
+```
+
+## plot 4
+Say something about plot 4
+
+```{r plot_4}
+idx <- 4 #iterate index by 1
+
+badtemp <- c(110,140)
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx])
+
+Ai <- 10
+Bi <- 5
+Ci <- 40
+Di <- 50
+
+make_plot(ids[idx])
+
+fit <-
+  nls(
+    cvn ~ func(t, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ), trace = T
+  )
+coefs <- coef(fit)
+
+data %>% 
+  # rename(t = temp) %>%
+  ggplot(aes(t, cvn)) +
+  geom_point() +
+  stat_function(fun = func,
+                args = list(Ai, Bi, Ci, Di)) +
+  theme_minimal() +
+  annotate(
+    "text",
+    x = min(data$t)+5,
+    y = max(data$cvn)-5,
+    label = paste("A =", round(coefs[1],1),
+                  ",B =", round(coefs[2],1),
+                  ",C =", round(coefs[3],1),
+                  ",D =", round(coefs[4],1)),
+    hjust = 0
+  ) +
+  labs(title = paste("ID =", ids[idx]))
+
+```
+
+
+## plot 5
+Say something about plot 3
+
+```{r plot_5}
+idx <- idx+1 #iterate index by 1
+
+badtemp <- c(45,95)
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx], t %notin% badtemp)
+
+Ai <- 40
+Bi <- 13
+Ci <- 30
+Di <- 89
+
+make_plot(ids[idx])
+
+fit <-
+  nls(
+    cvn ~ func(t, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ), trace = T
+  )
+coefs <- coef(fit)
+
+data %>% 
+  # rename(t = temp) %>%
+  ggplot(aes(t, cvn)) +
+  geom_point() +
+  stat_function(fun = func,
+                args = list(Ai, Bi, Ci, Di)) +
+  theme_minimal() +
+  annotate(
+    "text",
+    x = min(data$cvn) + 5,
+    y = max(data$cvn)-5,
+    label = paste("A =", round(coefs[1],1),
+                  ",B =", round(coefs[2],1),
+                  ",C =", round(coefs[3],1),
+                  ",D =", round(coefs[4],1)),
+    hjust = 0
+  ) +
+  labs(title = paste("ID =", ids[idx]))
+
+```
+
+
+```{r map plots}
+
+id <- unique(tim_cvn$id)
+
+make_plot2 <- function(id) {
+  tim_cvn %>%
+    filter(.data$id == .env$id) %>%
+    ggplot(aes(t, cvn)) +
+    geom_point() +
+    labs(title = paste("ID =", id))
+}
+
+
+plots <- map(id, make_plot2)
+
+```
+
