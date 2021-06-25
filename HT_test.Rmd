@@ -40,10 +40,28 @@ tim_cvn <-
         str_detect(full_transition_curve, "Yes"),
          sa_ss<=100) %>% #removing shear areas greater than 100
   select(id, bar_orientation, charpy_thickness_mm, temp_f, cvn_ss_ft_lbs, sa_ss)
+ 
+#list of id that max is less than 90%
+idlist <- tim_cvn %>% 
+  group_by(id) %>% 
+  summarise(mx_sa=max(sa_ss)) %>% 
+  filter(mx_sa<90)
+
+temp_id_list <- tim_cvn %>% 
+  group_by(id, temp_f) %>% 
+  summarise(unique(temp_f)) %>% 
+  mutate(count = n()) %>% 
+  filter(count<4)
+
+`%notin%` <- Negate(`%in%`) # not in special function
+
+tim_cvn <- tim_cvn %>% 
+  filter(id %notin% idlist$id,
+         id %notin% temp_id_list$id)
 
 ids <- unique(tim_cvn$id) #create vector of ids
 
-`%notin%` <- Negate(`%in%`) # not in special function
+
 
 # hyperbolic tangent function
 func <- function(temp_f, A, B, C, D) {
@@ -184,7 +202,7 @@ data %>%
 ## plot 1- Shear Area
 Say something about plot 1
 
-```{r plot_1}
+```{r plot_1_sa}
 idx <- 1 #start index at 1
 
 data <- tim_cvn %>% 
@@ -311,7 +329,7 @@ data %>%
 ## plot 2- Shear Area
 Say something about plot 2
 
-```{r plot_2}
+```{r plot_2sa}
 idx <- 2 #start index at 1
 
 data <- tim_cvn %>% 
@@ -438,7 +456,7 @@ data %>%
 ## plot 3- Shear Area
 Say something about plot 3
 
-```{r plot_3}
+```{r plot_3sa}
 idx <- 3 #start index at 1
 
 data <- tim_cvn %>% 
@@ -566,7 +584,7 @@ data %>%
 ## plot 4- Shear Area
 Say something about plot 4 (Error)
 
-```{r plot_4}
+```{r plot_4sa}
 idx <- 4 #start index at 1
 
 data <- tim_cvn %>% 
@@ -581,7 +599,8 @@ LSE = min(data$sa_ss)
 LSE
 Ai <- (USE + LSE)/2
 Bi <- (USE - LSE)/2
-Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+Ci <- data %>% 
+  filter(slope == max(slope, na.rm = TRUE)) %>% 
   mutate(bc = Bi/slope)
 Ci = Ci$bc
 Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
@@ -693,7 +712,7 @@ data %>%
 ## plot 5- Shear Area
 Say something about plot 5 (Error)
 
-```{r plot_5}
+```{r plot_5sa}
 idx <- 5 #start index at 1
 
 data <- tim_cvn %>% 
@@ -780,7 +799,7 @@ Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>%
   select(mean_t)
 Di = Di$mean_t
 
-#make_plot(ids[idx])
+make_plot(ids[idx])
 
 
 fit <-
@@ -821,7 +840,7 @@ data %>%
 ## plot 6- Shear Area
 Say something about plot 6
 
-```{r plot_6}
+```{r plot_6sa}
 idx <- 6 #start index at 1
 
 data <- tim_cvn %>% 
@@ -948,7 +967,7 @@ data %>%
 ## plot 7- Shear Area
 Say something about plot 7
 
-```{r plot_}
+```{r plot_7sa}
 idx <- 7 #start index at 1
 
 data <- tim_cvn %>% 
@@ -1074,7 +1093,7 @@ data %>%
 ## plot 8- Shear Area
 Say something about plot 8 (Error)
 
-```{r plot_8}
+```{r plot_8sa}
 idx <- 8 #start index at 1
 
 data <- tim_cvn %>% 
@@ -1200,7 +1219,7 @@ data %>%
 ## plot 9- Shear Area
 Say something about plot 9
 
-```{r plot_9}
+```{r plot_9sa}
 idx <- 9 #start index at 1
 
 data <- tim_cvn %>% 
@@ -1326,7 +1345,7 @@ data %>%
 ## plot 10- Shear Area
 Say something about plot 10
 
-```{r plot_10}
+```{r plot_10sa}
 idx <- 10 #start index at 1
 
 data <- tim_cvn %>% 
@@ -1453,7 +1472,7 @@ data %>%
 ## plot 11- Shear Area
 Say something about plot 11 (Error)
 
-```{r plot_11}
+```{r plot_11sa}
 idx <- 11 #start index at 11
 
 data <- tim_cvn %>% 
@@ -1522,9 +1541,10 @@ idx <- 12
 
 data <- tim_cvn %>% 
   filter(id==ids[idx]) %>% 
-  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
-         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
-         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+  mutate(mean_t = rollmean(temp_f,6,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,6,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f))) %>% 
+  filter( temp_f!=32)
 
 USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
 USE
@@ -1541,6 +1561,10 @@ Di = Di$mean_t
 
 make_plot(ids[idx])
 
+# Ai <- -90
+# Bi <- 117
+# Ci <- 68
+# Di <- -100
 
 fit <-
   nls(
@@ -1552,7 +1576,9 @@ fit <-
       C = Ci,
       D = Di
     ),
+    control = list( maxiter=1000) ,
     trace = F
+      
   )
 
 coefs <- coef(fit)
@@ -1580,7 +1606,7 @@ data %>%
 ## plot 12- Shear Area
 Say something about plot 12
 
-```{r plot_12}
+```{r plot_12sa}
 idx <- 12 #start index at 1
 
 data <- tim_cvn %>% 
@@ -1705,7 +1731,7 @@ data %>%
 ## plot 13- Shear Area
 Say something about plot 13
 
-```{r plot_13}
+```{r plot_13sa}
 idx <- 13 #start index at 1
 
 data <- tim_cvn %>% 
@@ -1830,7 +1856,7 @@ data %>%
 ## plot 14- Shear Area
 Say something about plot 14
 
-```{r plot_14}
+```{r plot_14sa}
 idx <- 14 #start index at 1
 
 data <- tim_cvn %>% 
@@ -1955,7 +1981,7 @@ data %>%
 ## plot 15- Shear Area
 Say something about plot 15
 
-```{r plot_15}
+```{r plot_15sa}
 idx <- 15 #start index at 1
 
 data <- tim_cvn %>% 
@@ -2080,7 +2106,7 @@ data %>%
 ## plot 16- Shear Area
 Say something about plot 16
 
-```{r plot_16}
+```{r plot_16sa}
 idx <- 16 #start index at 1
 
 data <- tim_cvn %>% 
@@ -2149,7 +2175,9 @@ data <- tim_cvn %>%
   filter(id==ids[idx]) %>% 
   mutate(mean_t = rollmean(temp_f,4,fill = NA), 
          mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
-         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f))) 
+
+data <- data %>% group_by(temp_f) %>% slice_sample(n = 2) %>% ungroup()
 
 USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
 USE
@@ -2165,6 +2193,7 @@ Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>%
 Di = Di$mean_t
 
 make_plot(ids[idx])
+
 
 
 fit <-
@@ -2205,14 +2234,16 @@ data %>%
 ## plot 17- Shear Area
 Say something about plot 17 (Error)
 
-```{r plot_17}
+```{r plot_17sa}
 idx <- 17 #start index at 1
 
 data <- tim_cvn %>% 
   filter(id==ids[idx]) %>% 
-  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
-         mean_cvn = rollmean(sa_ss,4,fill = NA),
+  mutate(mean_t = rollmean(temp_f,6,fill = NA), 
+         mean_cvn = rollmean(sa_ss,6,fill = NA),
          slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+# data <- data %>% group_by(temp_f) %>% slice_sample(n=2) %>% 
+#   ungroup() %>% filter(temp_f!= 40)
 
 USE = max(data$sa_ss) #UPPER SHELF ENERGY
 USE
@@ -2229,6 +2260,8 @@ Di = Di$mean_t
 
 make_plot(ids[idx])
 
+# Ci = 10
+# Di = 70
 
 fit <-
   nls(
@@ -2240,7 +2273,7 @@ fit <-
       C = Ci,
       D = Di
     ),
-    trace = F
+    trace = T,control = list(minFactor=1/1e4)
   )
 
 coefs <- coef(fit)
@@ -2289,7 +2322,7 @@ Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>%
   select(mean_t)
 Di = Di$mean_t
 
-#make_plot(ids[idx])
+make_plot(ids[idx])
 
 
 fit <-
@@ -2330,7 +2363,7 @@ data %>%
 ## plot 18- Shear Area
 Say something about plot 18
 
-```{r plot_18}
+```{r plot_18sa}
 idx <- 18 #start index at 1
 
 data <- tim_cvn %>% 
@@ -2455,7 +2488,7 @@ data %>%
 ## plot 19- Shear Area
 Say something about plot 19 (Error)
 
-```{r plot_19}
+```{r plot_19sa}
 idx <- 19 #start index at 1
 
 data <- tim_cvn %>% 
@@ -2580,7 +2613,7 @@ data %>%
 ## plot 20 - Shear Area
 Say something about plot 20
 
-```{r plot_20}
+```{r plot_20sa}
 idx <- 20 #start index at 1
 
 data <- tim_cvn %>% 
@@ -2705,7 +2738,7 @@ data %>%
 ## plot 21 - Shear Area
 Say something about plot 21
 
-```{r plot_21}
+```{r plot_21sa}
 idx <- 21 #start index at 1
 
 data <- tim_cvn %>% 
@@ -2830,7 +2863,7 @@ data %>%
 ## plot 22 - Shear Area
 Say something about plot 22 (Error)
 
-```{r plot_22}
+```{r plot_22sa}
 idx <- 22 #start index at 1
 
 data <- tim_cvn %>% 
@@ -2955,7 +2988,7 @@ data %>%
 ## plot 23 - Shear Area
 Say something about plot 23
 
-```{r plot_23}
+```{r plot_23sa}
 idx <- 23 #start index at 1
 
 data <- tim_cvn %>% 
@@ -3080,7 +3113,7 @@ data %>%
 ## plot 24 - Shear Area
 Say something about plot 24
 
-```{r plot_24}
+```{r plot_24sa}
 idx <- 24 #start index at 1
 
 data <- tim_cvn %>% 
@@ -3204,7 +3237,7 @@ data %>%
 # plot 25 - Shear Area
 Say something about plot 25 (Error)
 
-```{r plot_25}
+```{r plot_25sa}
 idx <- 25 #start index at 1
 
 data <- tim_cvn %>% 
@@ -3329,7 +3362,7 @@ data %>%
 #plot 26 - Shear Area
 Say something about plot 26 (Error)
 
-```{r plot_26}
+```{r plot_26sa}
 idx <- 26 #start index at 1
 
 data <- tim_cvn %>% 
@@ -3454,7 +3487,7 @@ data %>%
 # plot 27 - Shear Area
 Say something about plot 27 (Error)
 
-```{r plot_27}
+```{r plot_27sa}
 idx <- 27 #start index at 1
 
 data <- tim_cvn %>% 
@@ -3579,7 +3612,7 @@ data %>%
 # plot 28 - Shear Area
 Say something about plot 28 
 
-```{r plot_28}
+```{r plot_28sa}
 idx <- 28 #start index at 1
 
 data <- tim_cvn %>% 
@@ -3704,7 +3737,7 @@ data %>%
 # plot 29 - Shear Area
 Say something about plot 29 (Error)
 
-```{r plot_29}
+```{r plot_29sa}
 idx <- 29 #start index at 1
 
 data <- tim_cvn %>% 
@@ -3829,7 +3862,7 @@ data %>%
 # plot 30 - Shear Area
 Say something about plot 30 
 
-```{r plot_30}
+```{r plot_30sa}
 idx <- 30 #start index at 1
 
 data <- tim_cvn %>% 
@@ -3954,7 +3987,7 @@ data %>%
 # plot 31 - Shear Area
 Say something about plot 31 
 
-```{r plot_31}
+```{r plot_31sa}
 idx <- 31 #start index at 1
 
 data <- tim_cvn %>% 
@@ -4079,7 +4112,7 @@ data %>%
 # plot 32 - Shear Area
 Say something about plot 32 (Error)
 
-```{r plot_32}
+```{r plot_32sa}
 idx <- 32 #start index at 1
 
 data <- tim_cvn %>% 
@@ -4204,7 +4237,7 @@ data %>%
 # plot 33 - Shear Area
 Say something about plot 33 (Error)
 
-```{r plot_33}
+```{r plot_33sa}
 idx <- 33 #start index at 1
 
 data <- tim_cvn %>% 
@@ -4329,7 +4362,7 @@ data %>%
 # plot 34 - Shear Area
 Say something about plot 34 (Error)
 
-```{r plot_34}
+```{r plot_34sa}
 idx <- 34 #start index at 1
 
 data <- tim_cvn %>% 
@@ -4454,7 +4487,7 @@ data %>%
 # plot 35 - Shear Area
 Say something about plot 35 (Error)
 
-```{r plot_35}
+```{r plot_35sa}
 idx <- 35 #start index at 1
 
 data <- tim_cvn %>% 
@@ -4516,7 +4549,7 @@ data %>%
 
 ## plot 36
 Say something about plot 36
-```{r plot_36}
+```{r plot_36sa}
 idx <- 36
 
 data <- tim_cvn %>% 
@@ -4641,7 +4674,7 @@ data %>%
 
 ## plot 37
 Say something about plot 37
-```{r plot_37}
+```{r plot_37sa}
 idx <- 37
 
 data <- tim_cvn %>% 
@@ -4826,7 +4859,7 @@ data %>%
 # plot 38 - Shear Area
 Say something about plot 38 
 
-```{r plot_38}
+```{r plot_38sa}
 idx <- 38 #start index at 1
 
 data <- tim_cvn %>% 
@@ -4950,7 +4983,7 @@ data %>%
 # plot 39 - Shear Area
 Say something about plot 39
 
-```{r plot_39}
+```{r plot_39sa}
 idx <- 39 #start index at 1
 
 data <- tim_cvn %>% 
@@ -5074,7 +5107,7 @@ data %>%
 # plot 40 - Shear Area
 Say something about plot 40
 
-```{r plot_40}
+```{r plot_40sa}
 idx <- 40 #start index at 1
 
 data <- tim_cvn %>% 
@@ -5199,7 +5232,7 @@ data %>%
 # plot 41 - Shear Area
 Say something about plot 41
 
-```{r plot_41}
+```{r plot_41sa}
 idx <- 41 #start index at 1
 
 data <- tim_cvn %>% 
@@ -5324,7 +5357,7 @@ data %>%
 # plot 42 - Shear Area
 Say something about plot 42
 
-```{r plot_42}
+```{r plot_42sa}
 idx <- 42 #start index at 1
 
 data <- tim_cvn %>% 
@@ -5449,7 +5482,7 @@ data %>%
 # plot 43 - Shear Area
 Say something about plot 43
 
-```{r plot_43}
+```{r plot_43sa}
 idx <- 43 #start index at 1
 
 data <- tim_cvn %>% 
@@ -5573,7 +5606,7 @@ data %>%
 # plot 44 - Shear Area
 Say something about plot 44
 
-```{r plot_44}
+```{r plot_44sa}
 idx <- 44 #start index at 1
 
 data <- tim_cvn %>% 
@@ -5697,7 +5730,7 @@ data %>%
 # plot 45 - Shear Area
 Say something about plot 45
 
-```{r plot_45}
+```{r plot_45sa}
 idx <- 45 #start index at 1
 
 data <- tim_cvn %>% 
@@ -5821,7 +5854,7 @@ data %>%
 # plot 46 - Shear Area
 Say something about plot 46
 
-```{r plot_46}
+```{r plot_46sa}
 idx <- 46 #start index at 1
 
 data <- tim_cvn %>% 
@@ -5946,7 +5979,7 @@ data %>%
 # plot 47 - Shear Area
 Say something about plot 47
 
-```{r plot_47}
+```{r plot_47sa}
 idx <- 47 #start index at 1
 
 data <- tim_cvn %>% 
@@ -6071,7 +6104,7 @@ data %>%
 # plot 48 - Shear Area
 Say something about plot 48
 
-```{r plot_48}
+```{r plot_48sa}
 idx <- 48 #start index at 1
 
 data <- tim_cvn %>% 
@@ -6195,7 +6228,7 @@ data %>%
 # plot 49 - Shear Area
 Say something about plot 49
 
-```{r plot_49}
+```{r plot_49sa}
 idx <- 49 #start index at 1
 
 data <- tim_cvn %>% 
@@ -6319,7 +6352,7 @@ data %>%
 # plot 50 - Shear Area
 Say something about plot 50
 
-```{r plot_50}
+```{r plot_50sa}
 idx <- 50 #start index at 1
 
 data <- tim_cvn %>% 
@@ -6443,7 +6476,7 @@ data %>%
 # plot 51 - Shear Area
 Say something about plot 51
 
-```{r plot_51}
+```{r plot_51sa}
 idx <- 51 #start index at 1
 
 data <- tim_cvn %>% 
@@ -6566,7 +6599,7 @@ data %>%
 # plot 52 - Shear Area
 Say something about plot 52
 
-```{r plot_52}
+```{r plot_52sa}
 idx <- 52 #start index at 1
 
 data <- tim_cvn %>% 
@@ -6689,7 +6722,7 @@ data %>%
 # plot 53 - Shear Area
 Say something about plot 53
 
-```{r plot_53}
+```{r plot_53sa}
 idx <- 53 #start index at 1
 
 data <- tim_cvn %>% 
@@ -6812,7 +6845,7 @@ data %>%
 # plot 54 - Shear Area
 Say something about plot 54
 
-```{r plot_54}
+```{r plot_54sa}
 idx <- 54 #start index at 1
 
 data <- tim_cvn %>% 
@@ -6936,7 +6969,7 @@ data %>%
 # plot 55 - Shear Area
 Say something about plot 55
 
-```{r plot_55}
+```{r plot_55sa}
 idx <- 55 #start index at 1
 
 data <- tim_cvn %>% 
@@ -7060,7 +7093,7 @@ data %>%
 # plot 56 - Shear Area
 Say something about plot 56
 
-```{r plot_56}
+```{r plot_56sa}
 idx <- 56 #start index at 1
 
 data <- tim_cvn %>% 
@@ -7185,7 +7218,7 @@ data %>%
 # plot 57 - Shear Area
 Say something about plot 57
 
-```{r plot_57}
+```{r plot_57sa}
 idx <- 57 #start index at 1
 
 data <- tim_cvn %>% 
@@ -7309,7 +7342,7 @@ data %>%
 # plot 58 - Shear Area
 Say something about plot 58 (Error)
 
-```{r plot_58}
+```{r plot_58sa}
 idx <- 58 #start index at 1
 
 data <- tim_cvn %>% 
@@ -7433,7 +7466,7 @@ data %>%
 # plot 59 - Shear Area
 Say something about plot 59 (Error)
 
-```{r plot_59}
+```{r plot_59sa}
 idx <- 59 #start index at 1
 
 data <- tim_cvn %>% 
@@ -7556,7 +7589,7 @@ data %>%
 # plot 60 - Shear Area
 Say something about plot 60
 
-```{r plot_60}
+```{r plot_60sa}
 idx <- 60 #start index at 1
 
 data <- tim_cvn %>% 
@@ -7679,7 +7712,7 @@ data %>%
 # plot 61 - Shear Area
 Say something about plot 61 (Error)
 
-```{r plot_61}
+```{r plot_61sa}
 idx <- 61 #start index at 1
 
 data <- tim_cvn %>% 
@@ -7802,7 +7835,7 @@ data %>%
 # plot 62 - Shear Area
 Say something about plot 62 (Error)
 
-```{r plot_62}
+```{r plot_62sa}
 idx <- 62 #start index at 1
 
 data <- tim_cvn %>% 
@@ -7925,7 +7958,7 @@ data %>%
 # plot 63 - Shear Area
 Say something about plot 63
 
-```{r plot_63}
+```{r plot_63sa}
 idx <- 63 #start index at 1
 
 data <- tim_cvn %>% 
@@ -8048,7 +8081,7 @@ data %>%
 # plot 64 - Shear Area
 Say something about plot 64
 
-```{r plot_64}
+```{r plot_64sa}
 idx <- 64 #start index at 1
 
 data <- tim_cvn %>% 
@@ -8172,7 +8205,7 @@ data %>%
 # plot 65 - Shear Area
 Say something about plot 65 (Error)
 
-```{r plot_65}
+```{r plot_65sa}
 idx <- 65 #start index at 1
 
 data <- tim_cvn %>% 
@@ -8296,7 +8329,7 @@ data %>%
 # plot 66 - Shear Area
 Say something about plot 66
 
-```{r plot_66}
+```{r plot_66sa}
 idx <- 66 #start index at 1
 
 data <- tim_cvn %>% 
@@ -8419,7 +8452,7 @@ data %>%
 # plot 67 - Shear Area
 Say something about plot 67
 
-```{r plot_67}
+```{r plot_67sa}
 idx <- 67 #start index at 1
 
 data <- tim_cvn %>% 
@@ -8542,7 +8575,7 @@ data %>%
 # plot 68 - Shear Area
 Say something about plot 68
 
-```{r plot_68}
+```{r plot_68sa}
 idx <- 68 #start index at 1
 
 data <- tim_cvn %>% 
