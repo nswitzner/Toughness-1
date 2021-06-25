@@ -1,0 +1,398 @@
+---
+title: "HT Function"
+author: "Joel Anderson"
+date: "6/18/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set( message = FALSE, warning = FALSE)
+```
+
+
+```{r data}
+
+library(readxl)
+library(tidyverse)
+
+# Read data in
+tim_cvn <-
+  read_excel(
+    "MasterDB-SQL-2020-09-24.xlsx",
+    sheet = "Charpy"
+  ) %>% janitor::clean_names() %>%
+  filter(full_transition_curve=="TRUE") %>%
+  select(feature,
+         temperature_f,
+         absorbed_energy_ft_lbs) %>%
+  rename(t = temperature_f,
+         cvn = absorbed_energy_ft_lbs,
+         id = feature)
+
+ids <- unique(tim_cvn$id) #create vector of ids
+
+`%notin%` <- Negate(`%in%`) # not in special function
+
+# hyperbolic tangent function
+func <- function(t, A, B, C, D) {
+  A + B * tanh((t - D) / C)
+}
+
+## played around with A,B,C,D so that the function was
+## close for first few data points
+## then used this as starting points for nls
+Ai <- 19
+Bi <- 13
+Ci <- 30
+Di <- 89
+
+
+make_plot <- function(id) {
+  tim_cvn %>%
+    filter(.data$id == .env$id) %>%
+    ggplot(aes(t, cvn)) +
+    geom_point() +
+    stat_function(fun = func,
+                  args = list(Ai, Bi, Ci, Di)) +
+    theme_minimal() +
+    annotate(
+      "text",
+      x = min(data$t)+5,
+      y = max(data$cvn)-5,
+      label = paste("A =", Ai,
+                    ",B =", Bi,
+                    ",C =", Ci,
+                    ",D =", Di),
+      hjust = 0
+    ) +
+    labs(title = paste("ID =", ids[idx]))
+}
+
+
+make_plot2 <- function(id) {
+  tim_cvn %>%
+    filter(.data$id == .env$id) %>%
+    ggplot(aes(t, cvn)) +
+    stat_function(fun = func,
+                  args = list(Ai, Bi, Ci, Di),
+                  col = 'blue') +
+    geom_point(col = 'maroon2') +
+    theme_minimal() +
+    annotate(
+      "text",
+      x = min(data$t) + 5,
+      y = max(data$cvn) - 5,
+      label = paste(
+        "A =",
+        round(coefs[1], 1),
+        ",B =",
+        round(coefs[2], 1),
+        ",C =",
+        round(coefs[3], 1),
+        ",D =",
+        round(coefs[4], 1)
+      ),
+      hjust = 0
+    ) +
+    geom_point(data, inherit.aes = F,aes(t, .pred), col = '#00FF7F') +
+    labs(title = paste("ID =", ids[idx])) +
+    geom_errorbar(data, inherit.aes = F, aes(
+      ymin = .pred - 1. * abs(err$sigma),
+      ymax = .pred + 1. * abs(err$sigma)
+    ),
+    col = 'grey50')
+}
+
+```
+
+## All the data considered
+ID = H-08 trial
+
+```{r plot_1, fig.cap="Figure 1, Plot 1 - all data"}
+idx <- 2 #iterate index by 1
+
+badtemp <- c(60,120) # specify any bad temps to throw out
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx])
+
+Ai <- 19
+Bi <- 13
+Ci <- 30
+Di <- 89
+
+# make_plot(ids[idx])
+
+fit <-
+  nls(
+    cvn ~ func(t, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+
+err <- summary(fit)
+
+data <-
+  data %>%
+  mutate(.pred = func(t,
+                      coefs[1],
+                      coefs[2],
+                      coefs[3],
+                      coefs[4]))
+
+data %>%
+  # rename(t = temp) %>%
+  ggplot(aes(t, cvn)) +
+  geom_point(col = 'maroon2') +
+  stat_function(
+    fun = func,
+    args = list(coefs[1],
+                coefs[2],
+                coefs[3],
+                coefs[4]),
+    col = 'blue'
+  ) +
+  stat_function(
+    fun = func,
+    args = list(Ai,
+                Bi,
+                Ci,
+                Di),
+    col = 'black',
+    alpha = 50
+  ) +
+  theme_minimal() +
+  annotate(
+    "text",
+    x = min(data$t) + 5,
+    y = max(data$cvn) - 5,
+    label = paste(
+      "A =",
+      round(coefs[1], 1),
+      ",B =",
+      round(coefs[2], 1),
+      ",C =",
+      round(coefs[3], 1),
+      ",D =",
+      round(coefs[4], 1)
+    ),
+    hjust = 0
+  ) +
+  geom_point(aes(t, .pred), col = '#00FF7F') +
+  labs(title = paste("ID =", ids[idx], "- All Data")) +
+  geom_errorbar(aes(
+    ymin = .pred - 1. * abs(err$sigma),
+    ymax = .pred + 1. * abs(err$sigma)
+  ),
+  col = 'grey50') +
+  scale_x_continuous(breaks = seq(20, 140, by = 20))
+
+
+```
+### Model Diagnostics 
+Even though the model convergeed, just by inspection of the plot that it's not a good fit to the data. Fortunately R has some diagnostic functions to interpret the goodness of fit in a quantative way.  
+
+This set of numbers in the table give information about the uncertainty in the fitted parameters. The far left column is the estimate for the parameter based on the model fit.  The next important number to look at is the p-value on the far right. Ideally, for a good fit to the data, the p-value should be less than 0.05 and we can see that none of the p-values meet the criteria indicating poor fit.
+
+```{r diag_1}
+summary(fit)
+
+```
+
+## Improvements to fit for H-08
+In this iteration we removed the outlier at 120 and re-ran the fitting function.
+
+```{r plot_2, fig.cap=" Figure 2: 120 F outlier removed"}
+
+
+badtemp <- c(120) # specify any bad temps to throw out
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx], t %notin% badtemp)
+
+# make_plot(ids[idx])
+
+fit <-
+  nls(
+    cvn ~ func(t, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+
+err <- summary(fit)
+
+data <-
+  data %>%
+  mutate(.pred = func(t,
+                      coefs[1],
+                      coefs[2],
+                      coefs[3],
+                      coefs[4]))
+
+data %>%
+  # rename(t = temp) %>%
+  ggplot(aes(t, cvn)) +
+  geom_point(col = 'maroon2') +
+  stat_function(
+    fun = func,
+    args = list(coefs[1],
+                coefs[2],
+                coefs[3],
+                coefs[4]),
+    col = 'blue'
+  ) +
+  stat_function(
+    fun = func,
+    args = list(Ai,
+                Bi,
+                Ci,
+                Di),
+    col = 'black',
+    alpha = 50
+  ) +
+  theme_minimal() +
+  annotate(
+    "text",
+    x = min(data$t) + 5,
+    y = max(data$cvn) - 5,
+    label = paste(
+      "A =",
+      round(coefs[1], 1),
+      ",B =",
+      round(coefs[2], 1),
+      ",C =",
+      round(coefs[3], 1),
+      ",D =",
+      round(coefs[4], 1)
+    ),
+    hjust = 0
+  ) +
+  geom_point(aes(t, .pred), col = '#00FF7F') +
+  labs(title = paste("ID =", ids[idx], "- 120 F filtered Out")) +
+  geom_errorbar(aes(
+    ymin = .pred - 1. * abs(err$sigma),
+    ymax = .pred + 1. * abs(err$sigma)
+  ),
+  col = 'grey50') +
+  scale_x_continuous(breaks = seq(20, 140, by = 20))
+
+```
+  
+### Model Diagnostics for Figure 2  
+Looking at Figure 2 vs. Figure 1 it's easy to see that the model has improved by taking out the one outlier. By reviewing the diagnostics now 3 of the four parameters are less than 0.05 with the one exception of C.  Parameters A and D are << 0.05 indicating a high degree of fit for those.  The standard error for C has dropped from 140 to less than 30.  But the curve still seems to have a poor fit. The CVN at 60 F seems to be an outlier.  So we will filter that one and see if the fit improves.  
+
+```{r diag_2}
+summary(fit)
+
+```
+
+### Improvements to fit for H-08 Round 2  
+```{r plot_3, fig.cap="Figure 3: 60 and 120 F Removed"}
+
+badtemp <- c(60,120) # specify any bad temps to throw out
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx], t %notin% badtemp)
+
+# make_plot(ids[idx])
+
+fit <-
+  nls(
+    cvn ~ func(t, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+
+err <- summary(fit)
+
+data <-
+  data %>%
+  mutate(.pred = func(t,
+                      coefs[1],
+                      coefs[2],
+                      coefs[3],
+                      coefs[4]))
+
+data %>%
+  # rename(t = temp) %>%
+  ggplot(aes(t, cvn)) +
+  geom_point(col = 'maroon2') +
+  stat_function(
+    fun = func,
+    args = list(coefs[1],
+                coefs[2],
+                coefs[3],
+                coefs[4]),
+    col = 'blue'
+  ) +
+  stat_function(
+    fun = func,
+    args = list(Ai,
+                Bi,
+                Ci,
+                Di),
+    col = 'black',
+    alpha = 50
+  ) +
+  theme_minimal() +
+  annotate(
+    "text",
+    x = min(data$t) + 5,
+    y = max(data$cvn) - 5,
+    label = paste(
+      "A =",
+      round(coefs[1], 1),
+      ",B =",
+      round(coefs[2], 1),
+      ",C =",
+      round(coefs[3], 1),
+      ",D =",
+      round(coefs[4], 1)
+    ),
+    hjust = 0
+  ) +
+  geom_point(aes(t, .pred), col = '#00FF7F') +
+  labs(title = paste("ID =", ids[idx], "- 60 & 120 F filtered Out")) +
+  geom_errorbar(aes(
+    ymin = .pred - 1. * abs(err$sigma),
+    ymax = .pred + 1. * abs(err$sigma)
+  ),
+  col = 'grey50') +
+  scale_x_continuous(breaks = seq(20, 140, by = 20))
+
+```
+
+### Model Diagnostics for Figure 3  
+After removing the outliers all the parameters are now less than 0.05 and the standard error on C has been reduced from more than 140 to less than 12, a substantial improvement.  Not just in C but all the parameters show substantial reductions in the standard error.
+
+```{r diag_3}
+summary(fit)
+
+```
+
+## Wrap Up
+This goes through the basic steps of diagnosing a fitted model.  First plot the results and if the model looks like it fits the measured data well then there might not be any adjustments needed but it is a good practice to look at the model diagnostics to see how well the model fit the individual parameters by examining the p-values and standard errors in the summary.
