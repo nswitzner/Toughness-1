@@ -66,22 +66,6 @@ func <- function(temp_f, A, B, C, D) {
   A + B * tanh((temp_f - D) / C)
 }
 
-## played around with A,B,C,D so that the function was
-## close for first few data points
-## then used this as starting points for nls
-# USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
-# USE
-# LSE = min(data$cvn_ss_ft_lbs)
-# LSE
-# Ai <- (USE + LSE)/2
-# Bi <- (USE - LSE)/2
-# Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
-#   mutate(bc = Bi/slope)
-# Ci = Ci$bc
-# Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
-#   select(mean_t)
-# Di = Di$mean_t
-
 
 make_plot <- function(id) {
   tim_cvn %>%
