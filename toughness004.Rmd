@@ -1,0 +1,8266 @@
+---
+title: "HT Function"
+author: "RSI PIpeline Slutions"
+date: "6/11/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+## R Markdown
+```{r data}
+library(readxl)
+library(tidyverse)
+library(zoo)
+library(tidymodels)
+
+
+# Read data in
+tim_cvn <-
+  read_excel(
+    "timp_met_charpy_clean_rev02.xlsx",
+    sheet = "Charpy"
+  ) %>% 
+  janitor::clean_names() %>%
+   rename(
+    location = specimen_location,
+    temp_f = test_temperature_f,
+    charpy_thickness_mm = specimen_thickness_mm,
+    cvn_ss_ft_lbs = measured_energy_absorbed_ft_lbs,
+    sa_ss = shear_area_percent
+  ) %>%
+  mutate(across(temp_f:sa_ss, as.numeric), 
+         sa_ss = as.numeric(str_remove(string = sa_ss,pattern = c("<", ">")))) %>%
+  filter(str_detect(location, "Base Metal"),   #removing weld tests
+        str_detect(single_or_multiple_temperature_test, "Multiple"), #remove single temp tests
+        str_detect(full_transition_curve, "Yes"),
+         sa_ss<=100, bar_orientation== "Transverse (T-L)") %>% #removing shear areas greater than 100
+  select(id, bar_orientation, charpy_thickness_mm, temp_f, cvn_ss_ft_lbs, sa_ss)
+ 
+#list of id that max is less than 90%
+idlist <- tim_cvn %>% 
+  group_by(id) %>% 
+  summarise(mx_sa=max(sa_ss)) %>% 
+  filter(mx_sa<90)
+
+temp_id_list <- tim_cvn %>% 
+  group_by(id, temp_f) %>% 
+  summarise(unique(temp_f)) %>% 
+  mutate(count = n()) %>% 
+  filter(count<4)
+
+`%notin%` <- Negate(`%in%`) # not in special function
+
+tim_cvn <- tim_cvn %>% 
+  filter(id %notin% idlist$id,
+         id %notin% temp_id_list$id)
+
+ids <- unique(tim_cvn$id) #create vector of ids
+
+
+
+# hyperbolic tangent function
+func <- function(temp_f, A, B, C, D) {
+  A + B * tanh((temp_f - D) / C)
+}
+
+
+make_plot <- function(id) {
+  tim_cvn %>%
+    filter(.data$id == .env$id) %>%
+    ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+    geom_point() +
+    stat_function(fun = func,
+                  args = list(Ai, Bi, Ci, Di)) +
+    theme_minimal() +
+    annotate(
+      "text",
+      x = min(data$temp_f)+5,
+      y = max(data$cvn_ss_ft_lbs)-5,
+      label = paste("A =", Ai,
+                    ",B =", Bi,
+                    ",C =", Ci,
+                    ",D =", Di),
+      hjust = 0
+    ) +
+    labs(title = paste("ID =", ids[idx]))
+}
+
+
+make_plot2 <- function(id) {
+  tim_cvn %>%
+    filter(.data$id == .env$id) %>%
+    ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+    geom_point() +
+    stat_function(fun = func,
+                  args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+    theme_minimal() +
+    annotate(
+      "text",
+      x = min(data$temp_f)+5,
+      y = max(data$cvn_ss_ft_lbs)-5,
+      label = paste("A =", 
+                    round(coefs[1], 1),
+                    ",B =", 
+                    round(coefs[2], 1),
+                    ",C =", 
+                    round (coefs[3],1),
+                    ",D =", 
+                    round (coefs[4],1)
+                    ),
+      hjust = 0
+    ) +
+    labs(title = paste("ID =", ids[idx]),x="Temperature (°F)", y = "Absorbed Energy (ft-lbs)")
+  
+}
+
+```
+
+
+```{r}
+plots_shear_area <- function(id) {
+  tim_cvn %>%
+    filter(.data$id == .env$id) %>%
+    ggplot(aes(temp_f, sa_ss)) +
+    geom_point() +
+    stat_function(fun = func,
+                  args = list(Ai, Bi, Ci, Di)) +
+    theme_minimal() +
+    annotate(
+      "text",
+      x = min(data$temp_f)+5,
+      y = max(data$sa_ss)-5,
+       label = paste("A =", Ai,
+                    ",B =", Bi,
+                    ",C =", Ci,
+                    ",D =", Di),
+      hjust = 0
+    ) +
+    labs(title = paste("ID =", ids[idx]))
+}
+
+
+make_plot3 <- function(id) {
+  tim_cvn %>%
+    filter(.data$id == .env$id) %>%
+    ggplot(aes(temp_f, sa_ss)) +
+    geom_point() +
+    stat_function(fun = func,
+                  args = list(Ai, Bi, Ci, Di)) +
+    theme_minimal() +
+    annotate(
+      "text",
+      x = min(data$temp_f)+5,
+      y = max(data$sa_ss)-5,
+       label = paste("A =", 
+                    round(coefs[1], 1),
+                    ",B =", 
+                    round(coefs[2], 1),
+                    ",C =", 
+                    round (coefs[3],1),
+                    ",D =", 
+                    round (coefs[4],1)
+                    ),
+      hjust = 0
+    ) +
+     
+    labs(title = paste("ID =", ids[idx]), x="Temperature (°F)", y = "Shear Area (%)")
+}
+```
+
+
+```{r   cvn_params}
+idx <- 1 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) 
+```
+
+## Shear Area and Transition Temperature  
+The same hyperbolic tangent model used for CVN can be fit for the shear area vs. temperature and the uncertainty of the parameters extracted. By definition, the transition temperature (TT) is the temperature at which 85% shear area occurs. To determine the TT from the model requires solving the hyperbolic tangent function for shear area equal to 85%. The hyperbolic tangent function is defined as:  
+
+$$
+\begin{align}
+&SA=A +B \ tanh\left(\frac{T- D}{C}\right)\\
+&Where:\\
+&A,B,C,D = Regression \ Coefficients\\
+&SA = Shear \ Area
+\end{align}
+$$
+  
+## Hyperbolic Tangent Plot of Shear Area  
+```{r shear_area}
+data <- data %>% 
+mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+# USE
+LSE = min(data$sa_ss)
+# LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit_sa <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs_sa <- coef(fit_sa)
+
+
+mtf <- min(data$temp_f)
+US <- coefs_sa[1] + coefs_sa[2]
+LS <- coefs_sa[1] - coefs_sa[2]
+T2 <- data %>% slice_max(order_by = cvn_ss_ft_lbs,n = 2) #top 2
+B2 <- data %>% slice_min(order_by = cvn_ss_ft_lbs,n = 2) #bottom 2
+slope <- coefs_sa[2] / coefs_sa[3] # slope of tangent
+
+A <- coefs_sa[1]
+B <- coefs_sa[2]
+C <- coefs_sa[3]
+D <- coefs_sa[4]
+
+AL <- mean(T2$temp_f-(D+C))#Arc length
+theta <- atan(slope) #Angle
+d <- AL *sin(theta) #vertical distance of arc
+l_prime <- AL*cos(theta) #Hztl. projection of arc
+mint <- min(data$temp_f)
+maxt <- max(data$temp_f)
+#--------------------
+
+AD <- tibble(
+  x = c(mtf,
+        coefs_sa[4],
+        coefs_sa[4]),
+  y = c(coefs_sa[1],
+        coefs_sa[1],
+        0)
+)
+
+OD <- tibble(
+  x = c(
+    mtf,
+    D - C,
+    D + 1.5 * C
+  ),
+  y = c(
+    LS,
+    LS,
+    LS +
+      2.5 * C * slope
+  )
+)
+
+LU <-
+  tibble(
+    x = c(
+     D + C,
+      D + C
+    ),
+    y = c(LS-6, 
+         US)
+  )
+
+CV = tibble(x = c(mean(T2$temp_f), mean(T2$temp_f)-7.5),
+            y = c(US, US + slope*(mean(T2$temp_f)-7.5 - D - C)))
+
+minc <- (min(data$sa_ss))
+
+# ----------------------
+plt_sa <- data %>%
+  # rename(t = temp) %>%
+  ggplot(aes(temp_f, sa_ss)) +
+  geom_point() +
+  stat_function(fun = func,
+                args = list(coefs_sa[1],
+                            coefs_sa[2],
+                            coefs_sa[3],
+                            coefs_sa[4]),
+                col='orangered') +
+  theme_minimal() +
+  annotate(
+    "text",
+    x = min(data$temp_f) + 10,
+    y = max(data$sa_ss) + 10 ,
+    label = paste(
+      "A =",
+      round(coefs_sa[1], 1),
+      ",B =",
+      round(coefs_sa[2], 1),
+      ",C =",
+      round(coefs_sa[3], 1),
+      ",D =",
+      round(coefs_sa[4], 1)
+    ),
+    hjust = 0
+  ) +
+  labs(title = paste("ID =", ids[idx]),
+       x ="Temperature (\u00B0F)", 
+       y ="Percent Shear Area (%)")
+
+TT <- coefs_sa[3]*atanh((85-coefs_sa[1])/coefs_sa[2])+coefs_sa[4]
+
+plt_sa +
+  geom_line(data = AD,
+            aes(x, y),
+            lty = 2,
+            col = 'grey25', alpha=0.75) +
+  geom_line(data = OD,
+            aes(x, y),
+            lty = 1,
+            col = 'grey25', alpha=0.75) +
+  geom_line(data = LU,
+            aes(x, y),
+            lty = 1,
+            col = 'grey25', alpha=0.75) +
+  geom_linerange(aes(x = D - C, ymin = 0, ymax = LS),
+                 col='grey25', alpha=0.75) +
+  geom_linerange(aes(x = D + C, ymin = 0, ymax = US), 
+                 col='grey25', alpha=0.75) +
+  geom_segment(
+    data = NULL,
+    aes(
+      x = D - C,
+      xend = D,
+      y = minc - 1,
+      yend = minc - 1
+    ) ,
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  geom_segment(
+    data = NULL,
+    aes(
+      x = D ,
+      xend = D + C,
+      y = minc - 1,
+      yend = minc - 1
+    ) ,
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  geom_hline(yintercept = A + B,
+             col = 'grey25', alpha=0.75) +
+  geom_curve(
+    data = CV,
+    aes(
+      x = x[1],
+      xend = x[2],
+      y = y[1],
+      yend = y[2]
+    ),
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  annotate(
+    "text",
+    x = mean(T2$temp_f) + 7.5,
+    y = sum(CV$y) / 2 + 2,
+    label = "B/C"
+  ) +
+  annotate(
+    "text",
+    x = c(sum(D, D - C) / 2, sum(D, D + C) / 2),
+    y = c(minc + 5, minc + 5),
+    label = c("C", "C")
+  ) +
+  annotate("text",
+           x = D,
+           y = LS - 10,
+           label = "D") +
+  geom_segment(
+    aes(
+      x = mint + 5,
+      xend = mint + 5,
+      y = LS,
+      yend = A
+    ),
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  geom_segment(
+    aes(
+      x = mint + 5,
+      xend = mint + 5,
+      y = US,
+      yend = A
+    ),
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  annotate(
+    "text",
+    x = c(mint + 10, mint + 10),
+    y = c(mean(c(LS, A)), mean(c(US, A))),
+    label = c("B", "B")
+  ) +
+  annotate("text",
+           x = mint - 5,
+           y = A,
+           label = "A") #+
+  # annotate("text", x = D / 10, US + 10, label = "Upper Shelf:\nA + B") +
+  # annotate("text", x = D / 10, LS + 15, label = "Lower Shelf:\nA - B")
+
+```
+
+
+
+Solving the hyperbolic tangent for temperature:  
+$$ T = C \ tanh^{-1}\left(\frac{SA -A}{B}\right)+D$$  
+  
+Then setting the shear area to 85% in the temperature equation will give the TT. Since the model was fit based on whole numbers for percentages rather than decimal equivalent, the shear area is set to 85 rather than 0.85. If decimal equivalents are used to fit the model 0.85 would be used in the temperature equation.  
+
+```{r SA_coefs }
+tidy_sa <- tidy(fit_sa, conf.int = T)
+
+flextable::flextable(tidy_sa[, c(1:3, 6:7)]) %>%
+  flextable::colformat_double(digits = 2)%>% 
+  flextable::set_caption("Shear Area Model Results")
+```
+
+After fitting the model, extracting the coefficients and confidence intervals the LCI and UCI for transition temperature is arrived at:  
+$$
+\begin{align}
+&Transition \ Temperature \ Confidence \  Intervals: \\
+&UCI_{TT} = (conf.high_C) \ tanh^{-1}\left(\frac{85 - conf.low_A}{conf.low_B}\right)+conf.high_D\\
+&LCI_{TT} = (conf.low_C) \ tanh^{-1}\left(\frac{85 - conf.high_A}{conf.high_B}\right)+conf.low_D
+\end{align}
+$$
+## Plot of Transition Temperature with Confidence Intervals 
+```{r TT_w_uncertain}
+TT_LCI <- tidy_sa$conf.low[3] *
+  atanh(((85 - tidy_sa$conf.high[1]) / tidy_sa$conf.high[2])) +
+  tidy_sa$conf.low[4]
+
+TT_UCI <- tidy_sa$conf.high[3] *
+  atanh(((85 - tidy_sa$conf.low[1]) / tidy_sa$conf.low[2])) +
+  tidy_sa$conf.high[4]
+
+sa_high <- func(TT, tidy_sa$conf.high[1], tidy_sa$conf.high[2], tidy_sa$conf.low[3],tidy_sa$conf.low[4])
+sa_low <- func(TT, tidy_sa$conf.low[1], tidy_sa$conf.low[2], tidy_sa$conf.high[3],tidy_sa$conf.high[4])
+
+plt_sa +
+  geom_errorbarh(
+    aes(xmin = TT_LCI, xmax = TT_UCI, y = 85),
+    height = 5,
+    col = 'blue',
+    lwd = 0.9
+  ) +
+  geom_errorbar(aes(x = TT, ymin = sa_low, ymax = sa_high),
+                col = 'blue',
+                lwd = 0.9,
+                width =4)+
+  geom_point(aes(x = TT, y = 85),
+             col = 'blue', size=2) +
+  geom_segment(aes(
+    x = TT_LCI,
+    xend = TT_LCI,
+    y = 0,
+    yend = 85
+  ), lty = 2) +
+  geom_segment(aes(
+    x = TT_UCI,
+    xend = TT_UCI,
+    y = 0,
+    yend = 85
+  ), lty = 2) +
+  geom_segment(
+    aes(
+      x = TT_LCI,
+      xend = TT_UCI,
+      y = 12.5,
+      yend = 12.5
+    ),
+    arrow = arrow(
+      ends = "both",
+      type = "closed",
+      length = unit(0.075, "inches")
+    )
+  )+
+  annotate("text", 
+           label=paste("TT-CI:\n",floor(TT_LCI),"-",floor(TT_UCI)),
+           x=(TT_LCI+TT_UCI)/2, 
+           y=13)+
+  labs(title = "Transition Temperature Confidence Interval")
+  
+```
+
+## Hyperbolic Tangent Plot of CVN  
+```{r  plotcvn, fig.cap="Hyperbolic Tangent Parameters" }
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+
+LSE = min(data$cvn_ss_ft_lbs)
+
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+params <-  tidy(fit,conf.int =T)
+coefs <- coef(fit)
+
+
+mtf <- min(data$temp_f)
+US <- params$estimate[1] + params$estimate[2]
+LS <- params$estimate[1] - params$estimate[2]
+T2 <- data %>% slice_max(order_by = cvn_ss_ft_lbs,n = 2) #top 2
+B2 <- data %>% slice_min(order_by = cvn_ss_ft_lbs,n = 2) #bottom 2
+slope <- params$estimate[2] / params$estimate[3] # slope of tangent
+
+A <- params$estimate[1]
+B <- params$estimate[2]
+C <- params$estimate[3]
+D <- params$estimate[4]
+
+AL <- mean(T2$temp_f-(D+C))#Arc length
+theta <- atan(slope) #Angle
+d <- AL *sin(theta) #vertical distance of arc
+l_prime <- AL*cos(theta) #Hztl. projection of arc
+
+plt <- data %>%
+  # rename(t = temp) %>%
+  ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+  geom_point() +
+  stat_function(fun = func,
+                args = list(coefs[1],
+                            coefs[2],
+                            coefs[3],
+                            coefs[4]), col='orangered') +
+  theme_minimal() +
+  annotate(
+    "text",
+    x = min(data$temp_f) + 5,
+    y = max(data$cvn_ss_ft_lbs) +10 ,
+    label = paste(
+      "A =",
+      round(coefs[1], 1),
+      ",B =",
+      round(coefs[2], 1),
+      ",C =",
+      round(coefs[3], 1),
+      ",D =",
+      round(coefs[4], 1)
+    ),
+    hjust = 0
+  ) +
+  labs(title = paste("ID =", ids[idx]))+
+  ylim(LS-7,50)+
+  labs(x ="Temperature (\u00B0F)", 
+       y ="Absorbed Energy (Ft-lbs.)")
+
+AD <- tibble(
+  x = c(mtf,
+        params$estimate[4],
+        params$estimate[4]),
+  y = c(params$estimate[1],
+        params$estimate[1],
+        0)
+)
+
+OD <- tibble(
+  x = c(
+    mtf,
+    D - C,
+    D + 1.5 * C
+  ),
+  y = c(
+    LS,
+    LS,
+    LS +
+      2.5 * C * slope
+  )
+)
+
+LU <-
+  tibble(
+    x = c(
+     D + C,
+      D + C
+    ),
+    y = c(LS-6, 
+         US)
+  )
+
+CV = tibble(x = c(mean(T2$temp_f), mean(T2$temp_f)-7.5),
+            y = c(US, US + slope*(mean(T2$temp_f)-7.5 - D - C)))
+
+minc <- min(data$cvn_ss_ft_lbs)
+mint <- min(data$temp_f)
+maxt <- max(data$temp_f)
+
+plt +
+  geom_line(data = AD,
+            aes(x, y),
+            lty = 2,
+            col = 'grey25', alpha=0.75) +
+  geom_line(data = OD,
+            aes(x, y),
+            lty = 1,
+            col = 'grey25', alpha=0.75) +
+  geom_line(data = LU,
+            aes(x, y),
+            lty = 1,
+            col = 'grey25', alpha=0.75) +
+  geom_linerange(aes(x = D - C, ymin = 0, ymax = LS),
+                 col='grey25', alpha=0.75) +
+  geom_linerange(aes(x = D + C, ymin = 0, ymax = US), 
+                 col='grey25', alpha=0.75) +
+  geom_segment(
+    data = NULL,
+    aes(
+      x = D - C,
+      xend = D,
+      y = minc - 1,
+      yend = minc - 1
+    ) ,
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  geom_segment(
+    data = NULL,
+    aes(
+      x = D ,
+      xend = D + C,
+      y = minc - 1,
+      yend = minc - 1
+    ) ,
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  geom_hline(yintercept = A + B,
+             col = 'grey25', alpha=0.75) +
+  geom_curve(
+    data = CV,
+    aes(
+      x = x[1],
+      xend = x[2],
+      y = y[1],
+      yend = y[2]
+    ),
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  annotate(
+    "text",
+    x = mean(T2$temp_f) + 7.5,
+    y = sum(CV$y) / 2 + 2,
+    label = "B/C"
+  ) +
+  annotate(
+    "text",
+    x = c(sum(D, D - C) / 2, sum(D, D + C) / 2),
+    y = c(minc + 1, minc + 1),
+    label = c("C", "C")
+  ) +
+  annotate("text",
+           x = D,
+           y = LS - 5,
+           label = "D") +
+  geom_segment(
+    aes(
+      x = mint + 5,
+      xend = mint + 5,
+      y = LS,
+      yend = A
+    ),
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  geom_segment(
+    aes(
+      x = mint + 5,
+      xend = mint + 5,
+      y = US,
+      yend = A
+    ),
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  annotate(
+    "text",
+    x = c(mint + 10, mint + 10),
+    y = c(mean(c(LS, A)), mean(c(US, A))),
+    label = c("B", "B")
+  ) +
+  annotate("text",
+           x = mint - 5,
+           y = A,
+           label = "A") +
+  annotate("text", x = D / 10, US + 4, label = "Upper Shelf:\nA + B") +
+  annotate("text", x = D / 10, LS + 5, label = "Lower Shelf:\nA - B")
+
+
+```
+## Uncertainty in Estimates  
+The coefficients from the model are the maximum likelihood estimates for the parameters. Given that the model results are an a best estimate based on the data and that exact curve is unknown, there is uncertainty in the parameters that can be extracted from the model that fit them in the form of confidence intervals. The estimates are the average prediction for the parameters and the confidence intervals are a statement about the precision of that estimate.   
+   
+Note the size of the standard errors for the parameters A and B compared to C and D. This is an indications that based on the data and model fit, the width of the uncertainty for the upper and lower shelf will be much smaller than for the transition region. If data was collected at more of the intermediate temperatures through this region this uncertainty would likely be reduced.
+
+```{r uncertainty}
+cvn_aug <- augment(fit, interval = "confidence")
+
+perf <- glance(fit)
+
+coefs <- coef(fit)
+
+shelf <- c(coefs[1] + coefs[2], coefs[1] - coefs[2])
+
+.upper <- c(params$conf.high[1] + params$conf.high[2],
+            params$conf.low[1] - params$conf.low[2])
+
+.lower <- c(params$conf.low[1] + params$conf.low[2],
+            params$conf.high[1] - params$conf.high[2])
+
+name <- c("Upper", "Lower")
+
+usls <- tibble(name, shelf, .upper, .lower, temp = c(maxt, mint))
+
+flextable::flextable(params[c(1:3,6:7)]) %>% 
+  flextable::colformat_double(digits = 2) %>% 
+  flextable::set_caption("CVN Model Results")
+```
+
+The upper shelf (US) is calculated as the parameters A + B and the lower shelf (LS) is A - B and since we have the upper and lower confidence intervals (CI) for the parameters we can derive the upper and lower shelf CI's. The blue and green curves represent the confidence interval for the model. The confidence intervals cross since the *tanh* function changes sign when $T-D<0$. The greatest uncertainty is going to be at the upper shelf and since the lower shelf is constrained by zero it narrow significantly. 
+
+$$
+\begin{aligned}
+&Upper \ and \ Lower \ Shelf \ Confidence \ Intervals: \\
+&UCI_{US} = conf.high_A + conf.high_B\\
+&LCI_{US} = conf.low_A + conf.low_B\\
+&UCI_{LS} = conf.low_A - conf.low_B\\
+&LCI_{LS} = conf.high_A - conf.high_B\\
+\end{aligned}
+$$
+```{r ci_plot, fig.cap="Upper and Lower Shelf Confidence Intervals"}
+A <- params$estimate[1]
+B <- params$estimate[2]
+C <- params$estimate[3]
+D <- params$estimate[4]
+
+uslsCI <- tibble(
+  t = seq(mint, maxt,
+          length.out = 500),
+  cvn = func(t, A, B, C, D),
+  upper_PI = cvn + 1.96 * perf$sigma,
+  lower_PI = ifelse(cvn - 1.96 * perf$sigma < 0, 0, 
+                    cvn - 1.96 * perf$sigma)
+) %>%
+  pivot_longer(cols = upper_PI:lower_PI)
+
+usls %>%  
+  ggplot()+
+  # geom_point(aes(x = temp, y = shelf),
+  #            size = 2,
+  #            col = 'blue') +
+  geom_errorbar(aes(x = temp, ymin = .lower, ymax =.upper), 
+                width =4, 
+                col='blue',
+                lwd = 0.7)+
+  labs(title = "Confidence Intervals for Upper and Lower Shelf",
+       y = "CVN (ft-lbs)",
+       x = "Shelf")+
+  geom_point(data = data, aes(temp_f, cvn_ss_ft_lbs)) +
+  stat_function(data = data, fun = func,
+                args = list(coefs[1],
+                            coefs[2],
+                            coefs[3],
+                            coefs[4]), col='orangered') +
+  # stat_function(data = data, fun = func,
+  #               args = list(params$conf.high[1],
+  #                           params$conf.high[2],
+  #                           params$conf.low[3],
+  #                           params$conf.high[4]), col='blue') +
+  # stat_function(data = data, fun = func,
+  #               args = list(params$conf.low[1],
+  #                           params$conf.low[2],
+  #                           params$conf.high[3],
+  #                           params$conf.low[4]), col='green') +
+   # stat_function(data = data, fun = func,
+   #              args = list(params$conf.high[1],
+   #                          params$conf.high[2],
+   #                          params$estimate[3],
+   #                          params$estimate[4]), col='purple', lwd=1.1) +
+   # stat_function(data = data, fun = func,
+   #              args = list(params$conf.low[1],
+   #                          params$conf.low[2],
+   #                          params$estimate[3],
+   #                          params$estimate[4]), col='purple', lwd=1.1) +
+geom_line(data = uslsCI,aes(x =t, y = value, col=name),lwd=1)+
+  theme_minimal() +
+  annotate(
+    "text",
+    x = min(data$temp_f) + 5,
+    y = max(data$cvn_ss_ft_lbs) +10 ,
+    label = paste(
+      "A =",
+      round(coefs[1], 1),
+      ",B =",
+      round(coefs[2], 1),
+      ",C =",
+      round(coefs[3], 1),
+      ",D =",
+      round(coefs[4], 1)
+    ),
+    hjust = 0
+  ) +
+  labs(title = paste("ID =", ids[idx]))+
+  ylim(0,50)+
+  labs(x ="Temperature (\u00B0F)", 
+       y ="Absorbed Energy (Ft-lbs.)",
+       title = "Upper and Lower Shelf With Uncertainty")+
+  geom_segment(aes(x=mint, xend = 75, y = LS, yend =LS), lty=2)+
+  geom_segment(aes(x=maxt, xend = maxt - 75, y = US, yend =US), lty=2)+
+  annotate("text", x=c(75,maxt-75), y = c(LS, US),label = c("LS", "US"), hjust = c(-0.75,1.5))
+```
+
+
+## plot 1 - Shear Area
+```{r plot_1_sa}
+idx <- 1 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+data %>%
+  # rename(t = temp) %>%
+  ggplot(aes(temp_f, sa_ss)) +
+  geom_point() +
+  stat_function(fun = func,
+                args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+  theme_minimal() +
+  annotate(
+    "text",
+    x = min(data$temp_f)+5,
+    y = max(data$sa_ss)-5 ,
+    label = paste("A =", round(coefs[1],1),
+                  ",B =", round(coefs[2],1),
+                  ",C =", round(coefs[3],1),
+                  ",D =", round(coefs[4],1)),
+    hjust = 0
+  ) +
+  labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 1 - Absorbed Energy
+```{r plot_1}
+idx <- 1 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+
+
+
+count <- data %>% count(bar_orientation)
+
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+
+make_plot2(ids[idx])
+```
+
+
+## plot 2- Shear Area
+
+```{r plot_2sa}
+idx <- 2 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+```
+
+
+## plot 2 - Absorbed Energy
+
+```{r plot_2}
+idx <- 2 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+
+
+
+## plot 3- Shear Area
+
+```{r plot_3sa}
+idx <- 3 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+```
+
+
+## plot 3 - Absorbed Energy 
+
+```{r plot_3}
+idx <- 3 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+```
+
+
+## plot 4- Shear Area
+(Error in fit)
+```{r plot_4sa}
+idx <- 4 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% 
+  filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     sa_ss ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# cofs <- coef(fit)
+# data %>%
+# rename(t = temp) %>%
+# ggplot(aes(temp_f, sa_ss)) +
+# geom_point() +
+# stat_function(fun = func,
+#               args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+# theme_minimal() +
+# annotate(
+#   "text",
+#   x = min(data$temp_f)+5,
+#   y = max(data$sa_ss)-5 ,
+#   label = paste("A =", round(coefs[1],1),
+#                 ",B =", round(coefs[2],1),
+#                 ",C =", round(coefs[3],1),
+#                 ",D =", round(coefs[4],1)),
+#   hjust = 0
+# ) +
+# labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+
+
+```
+
+
+## plot 4 - Absorbed Energy
+
+```{r plot_4}
+idx <- 4 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 5- Shear Area
+ (Error in fit)
+
+```{r plot_5sa}
+idx <- 5 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+# make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     sa_ss ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 5 - absorbed energy
+ (Error in fit)
+
+```{r plot_5}
+idx <- 5 
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 6- Shear Area
+
+
+```{r plot_6sa}
+idx <- 6 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+
+```
+
+
+## plot 6 - absorbed energy
+
+
+```{r plot_6}
+idx <- 6
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 7- Shear Area
+
+
+```{r plot_7sa}
+idx <- 7 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+
+
+```
+
+
+## plot 7 - absorbed energy
+
+```{r plot_7}
+idx <- 7
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 8- Shear Area
+ (Error in fit)
+
+```{r plot_8sa}
+idx <- 8 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+
+
+```
+
+
+## plot 8 - absorbed energy
+ (Error in fit)
+```{r plot_8}
+idx <- 8
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 9- Shear Area
+
+
+```{r plot_9sa}
+idx <- 9 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+
+
+```
+
+
+## plot 9 - absorbed energy
+
+```{r plot_9}
+idx <- 9
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 10- Shear Area
+
+
+```{r plot_10sa}
+idx <- 10 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+
+```
+
+
+## plot 10 - absorbed energy
+(Error in fit )
+```{r plot_10}
+idx <- 10
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 11- Shear Area
+ (Error in fit)
+
+```{r plot_11sa}
+idx <- 11 #start index at 11
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+# make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     sa_ss ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+```
+
+
+
+## plot 11 - absorbed energy
+ ((Error in fit))
+```{r plot_11}
+idx <- 11
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 12- Shear Area
+
+
+```{r plot_12sa}
+idx <- 12 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 12 - absorbed energy
+
+```{r plot_12}
+idx <- 12
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,6,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,6,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f))) %>% 
+  filter( temp_f!=32)
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+# Ai <- -90
+# Bi <- 117
+# Ci <- 68
+# Di <- -100
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    control = list( maxiter=1000) ,
+    trace = F
+
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 13- Shear Area
+
+
+```{r plot_13sa}
+idx <- 13 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 13 - absorbed energy
+
+```{r plot_13}
+idx <- 13
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 14- Shear Area
+
+
+```{r plot_14sa}
+idx <- 14 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 14 - absorbed energy
+
+```{r plot_14}
+idx <- 14
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 15- Shear Area
+
+
+```{r plot_15sa}
+idx <- 15 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 15 - absorbed energy
+
+```{r plot_15}
+idx <- 15
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 16- Shear Area
+
+
+```{r plot_16sa}
+idx <- 16 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 16 - absorbed energy
+
+```{r plot_16}
+idx <- 16
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 17- Shear Area
+
+
+```{r plot_17sa}
+idx <- 17 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,6,fill = NA), 
+         mean_cvn = rollmean(sa_ss,6,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+# data <- data %>% group_by(temp_f) %>% slice_sample(n=2) %>% 
+#   ungroup() %>% filter(temp_f!= 40)
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+make_plot(ids[idx])
+
+# Ci = 10
+# Di = 70
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = T,control = list(minFactor=1/1e4)
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 17 - absorbed energy
+```{r plot_17}
+idx <- 17
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f))) 
+
+data <- data %>% group_by(temp_f) %>% slice_sample(n = 2) %>% ungroup()
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 18- Shear Area
+
+
+```{r plot_18sa}
+idx <- 18 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+
+make_plot3(ids[idx])
+```
+
+
+## plot 18 - absorbed energy
+(Error in fit)
+
+```{r plot_18}
+idx <- 18
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 19- Shear Area
+ (Error in fit)
+
+```{r plot_19sa}
+idx <- 19 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     sa_ss ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+
+make_plot3(ids[idx])
+```
+
+
+## plot 19 - absorbed energy
+ (Error in fit)
+```{r plot_19}
+idx <- 19
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 20 - Shear Area
+(Error in fit)
+
+```{r plot_20sa}
+idx <- 20 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     sa_ss ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 20 - absorbed energy
+(Error in fit )
+
+```{r plot_20}
+idx <- 20
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 21 - Shear Area
+
+
+```{r plot_21sa}
+idx <- 21 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 21 - absorbed energy
+
+```{r plot_21}
+idx <- 21
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 22 - Shear Area
+(Error in fit)
+
+```{r plot_22sa}
+idx <- 22 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     sa_ss ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 22 - absorbed energy
+
+```{r plot_22}
+idx <- 22
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+
+## plot 23 - Shear Area
+
+
+```{r plot_23sa}
+idx <- 23 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 23 -absorbed energy
+
+```{r plot_23}
+idx <- 23
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 24 - Shear Area
+
+
+```{r plot_24sa}
+idx <- 24 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 24 -absorbed energy
+
+```{r plot_24}
+idx <- 24
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+
+```
+
+
+# plot 25 - Shear Area
+(Error in fit)
+
+```{r plot_25sa}
+idx <- 25 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     sa_ss ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 25 -absorbed energy
+
+```{r plot_25}
+idx <- 25
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 26 - Shear Area
+(Error in fit)
+
+```{r plot_26sa}
+idx <- 26 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+# 
+# fit <-
+#   nls(
+#     sa_ss ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 26 -absorbed energy
+(Error in fit)
+```{r plot_26}
+idx <- 26
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 27 - Shear Area
+
+
+```{r plot_27sa}
+idx <- 27 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 27 -absorbed energy
+
+```{r plot_27}
+idx <- 27
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+# 
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+```
+
+
+## plot 28 - Shear Area
+
+
+```{r plot_28sa}
+idx <- 28 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+```
+
+
+
+## plot 28 -absorbed energy
+
+```{r plot_28}
+idx <- 28
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 29 - Shear Area
+
+
+```{r plot_29sa}
+idx <- 29 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+```
+
+
+## plot 29 -absorbed energy
+
+```{r plot_29}
+idx <- 29
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 30 - Shear Area
+ 
+
+```{r plot_30sa}
+idx <- 30 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 30 -absorbed energy
+
+```{r plot_30}
+idx <- 30
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 31 - Shear Area
+
+
+```{r plot_31sa}
+idx <- 31 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 31 -absorbed energy
+
+```{r plot_31}
+idx <- 31
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 32 - Shear Area
+
+
+```{r plot_32sa}
+idx <- 32 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 32 -absorbed energy
+(Error in fit)
+```{r plot_32}
+idx <- 32
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+make_plot2(ids[idx])
+
+
+```
+
+
+## plot 33 - Shear Area
+
+
+```{r plot_33sa}
+idx <- 33 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 33 -absorbed energy
+
+```{r plot_33}
+idx <- 33
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+
+```
+
+
+# plot 34 - Shear Area
+
+```{r plot_34sa}
+idx <- 34 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 34 -absorbed energy
+
+```{r plot_34}
+idx <- 34
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+
+```
+
+
+# plot 35 - Shear Area
+
+
+```{r plot_35sa}
+idx <- 35 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 35 -absorbed energy
+
+```{r plot_35}
+idx <- 35
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+
+```
+
+
+# plot 36 - Shear Area
+ 
+
+```{r plot_36}
+idx <- 36 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 36 -absorbed energy
+
+```{r plot_36sa}
+idx <- 36
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+
+```
+
+
+# plot 37 - Shear Area
+
+
+```{r plot_37}
+idx <- 37 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+```
+
+
+## plot 37 -absorbed energy
+
+```{r plot_37sa}
+idx <- 37
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+
+```
+
+
+# plot 38 - Shear Area
+ 
+
+```{r plot_38sa}
+idx <- 38 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 38 -absorbed energy
+
+```{r plot_38}
+idx <- 38
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+
+```
+
+
+# plot 39 - Shear Area
+
+
+```{r plot_39sa}
+idx <- 39 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 39 -absorbed energy
+
+```{r plot_39}
+idx <- 39
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+
+```
+
+
+# plot 40 - Shear Area
+
+
+```{r plot_40sa}
+idx <- 40 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 40 -absorbed energy
+
+```{r plot_40}
+idx <- 40
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+# plot 41 - Shear Area
+
+
+```{r plot_41sa}
+idx <- 41 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+```
+
+
+## plot 41 -absorbed energy
+
+```{r plot_41}
+idx <- 41
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+
+```
+
+
+# plot 42 - Shear Area
+
+
+```{r plot_42sa}
+idx <- 42 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 42 -absorbed energy
+
+```{r plot_42}
+idx <- 42
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 43 - Shear Area
+
+
+```{r plot_43sa}
+idx <- 43 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 43 -absorbed energy
+
+```{r plot_43}
+idx <- 43
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 44 - Shear Area
+
+
+```{r plot_44sa}
+idx <- 44 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+```
+
+
+## plot 44-absorbed energy
+
+```{r plot_44}
+idx <- 44
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 45 - Shear Area
+
+
+```{r plot_45sa}
+idx <- 45 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 45 -absorbed energy
+
+```{r plot_45}
+idx <- 45
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 46 - Shear Area
+
+
+```{r plot_46sa}
+idx <- 46 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+```
+
+
+## plot 46 -absorbed energy
+
+```{r plot_46}
+idx <- 46
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 47 - Shear Area
+(Error in fit)
+
+```{r plot_47sa}
+idx <- 47 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     sa_ss ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 47 -absorbed energy
+
+```{r plot_47}
+idx <- 47
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+
+```
+
+
+## plot 48 - Shear Area
+(Error in fit)
+
+```{r plot_48sa}
+idx <- 48 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     sa_ss ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+```
+
+
+## plot 48 -absorbed energy
+
+```{r plot_48}
+idx <- 48
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 49 - Shear Area
+
+
+```{r plot_49sa}
+idx <- 49 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 49 -absorbed energy
+
+```{r plot_49}
+idx <- 49
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 50 - Shear Area
+
+(Error in fit)
+```{r plot_50sa}
+idx <- 50 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     sa_ss ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>%
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 50 -absorbed energy
+
+```{r plot_50}
+idx <- 50
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 51 - Shear Area
+(Error in fit)
+
+```{r plot_51sa}
+idx <- 51 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     sa_ss ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 51 -absorbed energy
+
+```{r plot_51}
+idx <- 51
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+## plot 52 - Shear Area
+
+
+```{r plot_52sa}
+idx <- 52 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 52 -absorbed energy
+
+```{r plot_52}
+idx <- 52
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+# plot 53 - Shear Area
+
+
+```{r plot_53sa}
+idx <- 53 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 53 -absorbed energy
+
+```{r plot_53}
+idx <- 53
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+# plot 54 - Shear Area
+(Error in fit)
+
+```{r plot_54sa}
+idx <- 54 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     sa_ss ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 54 -absorbed energy
+(Error in fit)
+
+```{r plot_54}
+idx <- 54
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+# fit <-
+#   nls(
+#     cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+#     data = data ,
+#     start = list(
+#       A = Ai,
+#       B = Bi,
+#       C = Ci,
+#       D = Di
+#     ),
+#     trace = F
+#   )
+# 
+# coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot2(ids[idx])
+
+```
+
+
+# plot 55 - Shear Area
+
+
+```{r plot_55sa}
+idx <- 55 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 55 -absorbed energy
+
+```{r plot_55}
+idx <- 55
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+```
+
+
+# plot 56 - Shear Area
+
+
+```{r plot_56sa}
+idx <- 56 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+USE
+LSE = min(data$sa_ss)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, sa_ss)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$sa_ss)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+make_plot3(ids[idx])
+
+```
+
+
+## plot 56 -absorbed energy
+
+```{r plot_56}
+idx <- 56
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+USE
+LSE = min(data$cvn_ss_ft_lbs)
+LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+# data %>% 
+#   # rename(t = temp) %>%
+#   ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+#   geom_point() +
+#   stat_function(fun = func,
+#                 args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+#   theme_minimal() +
+#   annotate(
+#     "text",
+#     x = min(data$temp_f)+5,
+#     y = max(data$cvn_ss_ft_lbs)-5 ,
+#     label = paste("A =", round(coefs[1],1),
+#                   ",B =", round(coefs[2],1),
+#                   ",C =", round(coefs[3],1),
+#                   ",D =", round(coefs[4],1)),
+#     hjust = 0
+#   ) +
+#   labs(title = paste("ID =", ids[idx]))
+
+
+make_plot2(ids[idx])
+
+```
+
+
+
+
+
