@@ -20,37 +20,47 @@ library(tidymodels)
 
 # Read data in
 tim_cvn <-
-  read_excel(
-    "timp_met_charpy_clean_rev02.xlsx",
-    sheet = "Charpy"
-  ) %>% 
+  read_excel("timp_met_charpy_clean_rev02.xlsx",
+             sheet = "Charpy") %>%
   janitor::clean_names() %>%
-   rename(
+  rename(
     location = specimen_location,
     temp_f = test_temperature_f,
     charpy_thickness_mm = specimen_thickness_mm,
     cvn_ss_ft_lbs = measured_energy_absorbed_ft_lbs,
     sa_ss = shear_area_percent
   ) %>%
-  mutate(across(temp_f:sa_ss, as.numeric), 
-         sa_ss = as.numeric(str_remove(string = sa_ss,pattern = c("<", ">")))) %>%
-  filter(str_detect(location, "Base Metal"),   #removing weld tests
-        str_detect(single_or_multiple_temperature_test, "Multiple"), #remove single temp tests
-        str_detect(full_transition_curve, "Yes"),
-         sa_ss<=100, bar_orientation== "Transverse (T-L)") %>% #removing shear areas greater than 100
-  select(id, bar_orientation, charpy_thickness_mm, temp_f, cvn_ss_ft_lbs, sa_ss)
+  mutate(across(temp_f:sa_ss, as.numeric),
+         sa_ss = as.numeric(str_remove(
+           string = sa_ss, pattern = c("<", ">")
+         ))) %>%
+  filter(
+    str_detect(location, "Base Metal"),
+    #removing weld tests
+    str_detect(single_or_multiple_temperature_test, "Multiple"),
+    #remove single temp tests
+    str_detect(full_transition_curve, "Yes"),
+    sa_ss <= 100,
+    bar_orientation == "Transverse (T-L)"
+  ) %>% #removing shear areas greater than 100
+  select(id,
+         bar_orientation,
+         charpy_thickness_mm,
+         temp_f,
+         cvn_ss_ft_lbs,
+         sa_ss)
  
 #list of id that max is less than 90%
-idlist <- tim_cvn %>% 
-  group_by(id) %>% 
-  summarise(mx_sa=max(sa_ss)) %>% 
-  filter(mx_sa<90)
+idlist <- tim_cvn %>%
+  group_by(id) %>%
+  summarise(mx_sa = max(sa_ss)) %>%
+  filter(mx_sa < 90)
 
-temp_id_list <- tim_cvn %>% 
-  group_by(id, temp_f) %>% 
-  summarise(unique(temp_f)) %>% 
-  mutate(count = n()) %>% 
-  filter(count<4)
+temp_id_list <- tim_cvn %>%
+  group_by(id, temp_f) %>%
+  summarise(unique(temp_f)) %>%
+  mutate(count = n()) %>%
+  filter(count < 4)
 
 `%notin%` <- Negate(`%in%`) # not in special function
 
@@ -78,8 +88,8 @@ make_plot <- function(id) {
     theme_minimal() +
     annotate(
       "text",
-      x = min(data$temp_f)+5,
-      y = max(data$cvn_ss_ft_lbs)-5,
+      x = min(data$temp_f) + 5,
+      y = max(data$cvn_ss_ft_lbs) - 5,
       label = paste("A =", Ai,
                     ",B =", Bi,
                     ",C =", Ci,
@@ -90,7 +100,7 @@ make_plot <- function(id) {
 }
 
 
-make_plot2 <- function(id) {
+make_plot2 <- function(id,Ai, Bi, Ci, Di) {
   tim_cvn %>%
     filter(.data$id == .env$id) %>%
     ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
@@ -121,7 +131,7 @@ make_plot2 <- function(id) {
 
 
 ```{r}
-plots_shear_area <- function(id) {
+plots_shear_area <- function(id,Ai, Bi, Ci, Di) {
   tim_cvn %>%
     filter(.data$id == .env$id) %>%
     ggplot(aes(temp_f, sa_ss)) +
@@ -143,7 +153,7 @@ plots_shear_area <- function(id) {
 }
 
 
-make_plot3 <- function(id) {
+make_plot3 <- function(id,Ai, Bi, Ci, Di) {
   tim_cvn %>%
     filter(.data$id == .env$id) %>%
     ggplot(aes(temp_f, sa_ss)) +
@@ -173,7 +183,7 @@ make_plot3 <- function(id) {
 
 
 ```{r   cvn_params}
-idx <- 1 #start index at 1
+idx <- 3 #start index at 1
 
 data <- tim_cvn %>% 
   filter(id==ids[idx]) 
@@ -900,7 +910,7 @@ data <- tim_cvn %>%
   filter(id==ids[idx]) %>% 
   mutate(mean_t = rollmean(temp_f,4,fill = NA), 
          mean_cvn = rollmean(sa_ss,4,fill = NA),
-         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+         slope = (mean_cvn - first(sa_ss)) / (mean_t - first(temp_f)))
 
 USE = max(data$sa_ss) #UPPER SHELF ENERGY
 USE
@@ -908,10 +918,12 @@ LSE = min(data$sa_ss)
 LSE
 Ai <- (USE + LSE)/2
 Bi <- (USE - LSE)/2
-Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+Ci <- data %>% 
+  filter(slope == max(slope, na.rm = TRUE)) %>% 
   mutate(bc = Bi/slope)
 Ci = Ci$bc
-Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+Di <- data %>% 
+  filter(slope == max(slope, na.rm = TRUE)) %>% 
   select(mean_t)
 Di = Di$mean_t
 
@@ -932,6 +944,7 @@ fit <-
   )
 
 coefs <- coef(fit)
+
 data %>%
   # rename(t = temp) %>%
   ggplot(aes(temp_f, sa_ss)) +
@@ -949,7 +962,9 @@ data %>%
                   ",D =", round(coefs[4],1)),
     hjust = 0
   ) +
-  labs(title = paste("ID =", ids[idx]))
+  labs(title = paste("ID =", ids[idx], "Final Fit"),
+        x="Temperature (°F)", 
+       y = "Shear Area (%)")
 
 make_plot3(ids[idx])
 
@@ -1003,7 +1018,7 @@ fit <-
 
 coefs <- coef(fit)
 
-make_plot2(ids[idx])
+make_plot2(ids[idx],coefs[1], coefs[2],coefs[3], coefs[4])
 ```
 
 
@@ -1067,7 +1082,7 @@ coefs <- coef(fit)
 #   ) +
 #   labs(title = paste("ID =", ids[idx]))
 
-make_plot3(ids[idx])
+make_plot3(ids[idx],coefs[1],coefs[2],coefs[3],coefs[4])
 ```
 
 
@@ -1132,7 +1147,7 @@ coefs <- coef(fit)
 #   labs(title = paste("ID =", ids[idx]))
 
 
-make_plot2(ids[idx])
+make_plot2(ids[idx],coefs[1],coefs[2],coefs[3],coefs[4])
 ```
 
 
@@ -1199,7 +1214,7 @@ coefs <- coef(fit)
 #   ) +
 #   labs(title = paste("ID =", ids[idx]))
 
-make_plot3(ids[idx])
+make_plot3(ids[idx],coefs[1],coefs[2],coefs[3],coefs[4])
 ```
 
 
@@ -1263,7 +1278,7 @@ coefs <- coef(fit)
 #   ) +
 #   labs(title = paste("ID =", ids[idx]))
 
-make_plot2(ids[idx])
+make_plot2(ids[idx],coefs[1],coefs[2],coefs[3],coefs[4])
 ```
 
 
@@ -1276,7 +1291,7 @@ data <- tim_cvn %>%
   filter(id==ids[idx]) %>% 
   mutate(mean_t = rollmean(temp_f,4,fill = NA), 
          mean_cvn = rollmean(sa_ss,4,fill = NA),
-         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+         slope = (mean_cvn - first(sa_ss)) / (mean_t - first(temp_f)))
 
 USE = max(data$sa_ss) #UPPER SHELF ENERGY
 USE
@@ -1329,7 +1344,7 @@ Di = Di$mean_t
 # labs(title = paste("ID =", ids[idx]))
 
 
-make_plot3(ids[idx])
+make_plot3(ids[idx],coefs[1],coefs[2],coefs[3],coefs[4])
 
 
 
@@ -1396,7 +1411,7 @@ coefs <- coef(fit)
 #   ) +
 #   labs(title = paste("ID =", ids[idx]))
 
-make_plot2(ids[idx])
+make_plot2(ids[idx],coefs[1],coefs[2], coefs[3], coefs[4])
 
 ```
 
