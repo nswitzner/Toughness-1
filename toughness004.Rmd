@@ -131,7 +131,7 @@ make_plot2 <- function(id,Ai, Bi, Ci, Di) {
 
 
 ```{r}
-plots_shear_area <- function(id,Ai, Bi, Ci, Di) {
+plots_shear_area <- function(id) {
   tim_cvn %>%
     filter(.data$id == .env$id) %>%
     ggplot(aes(temp_f, sa_ss)) +
@@ -153,7 +153,7 @@ plots_shear_area <- function(id,Ai, Bi, Ci, Di) {
 }
 
 
-make_plot3 <- function(id) {
+make_plot3 <- function(id,Ai, Bi, Ci, Di) {
   tim_cvn %>%
     filter(.data$id == .env$id) %>%
     ggplot(aes(temp_f, sa_ss)) +
@@ -1192,8 +1192,8 @@ Di = Di$mean_t
 #     ),
 #     trace = F
 #   )
-# 
-# cofs <- coef(fit)
+
+cofs <- coef(fit)
 
 make_plot3(ids[idx],coefs[1],coefs[2],coefs[3],coefs[4])
 
@@ -1501,7 +1501,6 @@ make_plot2(ids[idx], coefs[1], coefs[2], coefs[3], coefs[4])
 
 
 ## plot 8- Shear Area
- (Error in fit)
 
 ```{r plot_8sa}
 idx <- 8 #start index at 1
@@ -2467,8 +2466,8 @@ Di = Di$mean_t
 #     ),
 #     trace = F
 #   )
-# 
-# coefs <- coef(fit)
+
+coefs <- coef(fit)
 
 make_plot3(ids[idx], coefs[1], coefs[2], coefs[3], coefs[4])
 ```
@@ -2722,8 +2721,8 @@ Di = Di$mean_t
 #     ),
 #     trace = F
 #   )
-# 
-# coefs <- coef(fit)
+
+coefs <- coef(fit)
 
 make_plot3(ids[idx], coefs[1], coefs[2], coefs[3], coefs[4])
 
