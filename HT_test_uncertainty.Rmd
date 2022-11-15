@@ -18,7 +18,7 @@ library(tidyverse)
 # Read data in
 tim_cvn <-
   read_excel(
-    "MasterDB-SQL-2020-09-24.xlsx",
+    "C:\\Users\\Joel\\OneDrive - RSI Pipeline Solutions\\PGE\\charpy\\hyperbolic\\MasterDB-SQL-2020-09-24.xlsx",
     sheet = "Charpy"
   ) %>% janitor::clean_names() %>%
   filter(full_transition_curve=="TRUE") %>%
