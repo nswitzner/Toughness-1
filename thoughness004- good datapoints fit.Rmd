@@ -1,0 +1,996 @@
+---
+title: "HT Function"
+author: "RSI PIpeline Slutions"
+date: "6/11/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+## R Markdown
+```{r data}
+library(readxl)
+library(tidyverse)
+library(zoo)
+library(tidymodels)
+
+
+# Read data in
+tim_cvn <-
+  read_excel("timp_met_charpy_clean_rev02.xlsx",
+             sheet = "Charpy") %>%
+  janitor::clean_names() %>%
+  rename(
+    location = specimen_location,
+    temp_f = test_temperature_f,
+    charpy_thickness_mm = specimen_thickness_mm,
+    cvn_ss_ft_lbs = measured_energy_absorbed_ft_lbs,
+    sa_ss = shear_area_percent
+  ) %>%
+  mutate(across(temp_f:sa_ss, as.numeric),
+         sa_ss = as.numeric(str_remove(
+           string = sa_ss, pattern = c("<", ">")
+         ))) %>%
+  filter(
+    str_detect(location, "Base Metal"),
+    #removing weld tests
+    str_detect(single_or_multiple_temperature_test, "Multiple"),
+    #remove single temp tests
+    str_detect(full_transition_curve, "Yes"),
+    sa_ss <= 100,
+    bar_orientation == "Transverse (T-L)"
+  ) %>% #removing shear areas greater than 100
+  select(id,
+         bar_orientation,
+         charpy_thickness_mm,
+         temp_f,
+         cvn_ss_ft_lbs,
+         sa_ss)
+ 
+#list of id that max is less than 90%
+idlist <- tim_cvn %>%
+  group_by(id) %>%
+  summarise(mx_sa = max(sa_ss)) %>%
+  filter(mx_sa < 90)
+
+temp_id_list <- tim_cvn %>%
+  group_by(id, temp_f) %>%
+  summarise(unique(temp_f)) %>%
+  mutate(count = n()) %>%
+  filter(count < 4)
+
+`%notin%` <- Negate(`%in%`) # not in special function
+
+tim_cvn <- tim_cvn %>% 
+  filter(id %notin% idlist$id,
+         id %notin% temp_id_list$id)
+
+ids <- unique(tim_cvn$id) #create vector of ids
+
+
+
+# hyperbolic tangent function
+func <- function(temp_f, A, B, C, D) {
+  A + B * tanh((temp_f - D) / C)
+}
+
+
+make_plot <- function(id) {
+  tim_cvn %>%
+    filter(.data$id == .env$id) %>%
+    ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+    geom_point() +
+    stat_function(fun = func,
+                  args = list(Ai, Bi, Ci, Di)) +
+    theme_minimal() +
+    annotate(
+      "text",
+      x = min(data$temp_f) + 5,
+      y = max(data$cvn_ss_ft_lbs) - 5,
+      label = paste("A =", Ai,
+                    ",B =", Bi,
+                    ",C =", Ci,
+                    ",D =", Di),
+      hjust = 0
+    ) +
+    labs(title = paste("ID =", ids[idx]))
+}
+
+
+make_plot2 <- function(id,Ai, Bi, Ci, Di) {
+  tim_cvn %>%
+    filter(.data$id == .env$id) %>%
+    ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+    geom_point() +
+    stat_function(fun = func,
+                  args = list(coefs[1], coefs[2], coefs[3], coefs[4])) +
+    theme_minimal() +
+    annotate(
+      "text",
+      x = min(data$temp_f)+5,
+      y = max(data$cvn_ss_ft_lbs)-5,
+      label = paste("A =", 
+                    round(coefs[1], 1),
+                    ",B =", 
+                    round(coefs[2], 1),
+                    ",C =", 
+                    round (coefs[3],1),
+                    ",D =", 
+                    round (coefs[4],1)
+                    ),
+      hjust = 0
+    ) +
+    labs(title = paste("ID =", ids[idx]),x="Temperature (°F)", y = "Absorbed Energy (ft-lbs)")
+  
+}
+
+```
+
+
+```{r}
+plots_shear_area <- function(id) {
+  tim_cvn %>%
+    filter(.data$id == .env$id) %>%
+    ggplot(aes(temp_f, sa_ss)) +
+    geom_point() +
+    stat_function(fun = func,
+                  args = list(Ai, Bi, Ci, Di)) +
+    theme_minimal() +
+    annotate(
+      "text",
+      x = min(data$temp_f)+5,
+      y = max(data$sa_ss)-5,
+       label = paste("A =", Ai,
+                    ",B =", Bi,
+                    ",C =", Ci,
+                    ",D =", Di),
+      hjust = 0
+    ) +
+    labs(title = paste("ID =", ids[idx]))
+}
+
+
+make_plot3 <- function(id,Ai, Bi, Ci, Di) {
+  tim_cvn %>%
+    filter(.data$id == .env$id) %>%
+    ggplot(aes(temp_f, sa_ss)) +
+    geom_point() +
+    stat_function(fun = func,
+                  args = list(Ai, Bi, Ci, Di)) +
+    theme_minimal() +
+    annotate(
+      "text",
+      x = min(data$temp_f)+5,
+      y = max(data$sa_ss)-5,
+       label = paste("A =", 
+                    round(coefs[1], 1),
+                    ",B =", 
+                    round(coefs[2], 1),
+                    ",C =", 
+                    round (coefs[3],1),
+                    ",D =", 
+                    round (coefs[4],1)
+                    ),
+      hjust = 0
+    ) +
+     
+    labs(title = paste("ID =", ids[idx]), x="Temperature (°F)", y = "Shear Area (%)")
+}
+```
+
+
+```{r   cvn_params}
+idx <- 3 #start index at 1
+
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) 
+```
+
+## Shear Area and Transition Temperature  
+The same hyperbolic tangent model used for CVN can be fit for the shear area vs. temperature and the uncertainty of the parameters extracted. By definition, the transition temperature (TT) is the temperature at which 85% shear area occurs. To determine the TT from the model requires solving the hyperbolic tangent function for shear area equal to 85%. The hyperbolic tangent function is defined as:  
+
+$$
+\begin{align}
+&SA=A +B \ tanh\left(\frac{T- D}{C}\right)\\
+&Where:\\
+&A,B,C,D = Regression \ Coefficients\\
+&SA = Shear \ Area
+\end{align}
+$$
+
+## Hyperbolic Tangent Plot of Shear Area  
+```{r shear_area}
+data <- data %>% 
+mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+# USE
+LSE = min(data$sa_ss)
+# LSE
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit_sa <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs_sa <- coef(fit_sa)
+
+
+mtf <- min(data$temp_f)
+US <- coefs_sa[1] + coefs_sa[2]
+LS <- coefs_sa[1] - coefs_sa[2]
+T2 <- data %>% slice_max(order_by = cvn_ss_ft_lbs,n = 2) #top 2
+B2 <- data %>% slice_min(order_by = cvn_ss_ft_lbs,n = 2) #bottom 2
+slope <- coefs_sa[2] / coefs_sa[3] # slope of tangent
+
+A <- coefs_sa[1]
+B <- coefs_sa[2]
+C <- coefs_sa[3]
+D <- coefs_sa[4]
+
+AL <- mean(T2$temp_f-(D+C))#Arc length
+theta <- atan(slope) #Angle
+d <- AL *sin(theta) #vertical distance of arc
+l_prime <- AL*cos(theta) #Hztl. projection of arc
+mint <- min(data$temp_f)
+maxt <- max(data$temp_f)
+#--------------------
+
+AD <- tibble(
+  x = c(mtf,
+        coefs_sa[4],
+        coefs_sa[4]),
+  y = c(coefs_sa[1],
+        coefs_sa[1],
+        0)
+)
+
+OD <- tibble(
+  x = c(
+    mtf,
+    D - C,
+    D + 1.5 * C
+  ),
+  y = c(
+    LS,
+    LS,
+    LS +
+      2.5 * C * slope
+  )
+)
+
+LU <-
+  tibble(
+    x = c(
+     D + C,
+      D + C
+    ),
+    y = c(LS-6, 
+         US)
+  )
+
+CV = tibble(x = c(mean(T2$temp_f), mean(T2$temp_f)-7.5),
+            y = c(US, US + slope*(mean(T2$temp_f)-7.5 - D - C)))
+
+minc <- (min(data$sa_ss))
+
+# ----------------------
+plt_sa <- data %>%
+  # rename(t = temp) %>%
+  ggplot(aes(temp_f, sa_ss)) +
+  geom_point() +
+  stat_function(fun = func,
+                args = list(coefs_sa[1],
+                            coefs_sa[2],
+                            coefs_sa[3],
+                            coefs_sa[4]),
+                col='orangered') +
+  theme_minimal() +
+  annotate(
+    "text",
+    x = min(data$temp_f) + 10,
+    y = max(data$sa_ss) + 10 ,
+    label = paste(
+      "A =",
+      round(coefs_sa[1], 1),
+      ",B =",
+      round(coefs_sa[2], 1),
+      ",C =",
+      round(coefs_sa[3], 1),
+      ",D =",
+      round(coefs_sa[4], 1)
+    ),
+    hjust = 0
+  ) +
+  labs(title = paste("ID =", ids[idx]),
+       x ="Temperature (\u00B0F)", 
+       y ="Percent Shear Area (%)")
+
+TT <- coefs_sa[3]*atanh((85-coefs_sa[1])/coefs_sa[2])+coefs_sa[4]
+
+plt_sa +
+  geom_line(data = AD,
+            aes(x, y),
+            lty = 2,
+            col = 'grey25', alpha=0.75) +
+  geom_line(data = OD,
+            aes(x, y),
+            lty = 1,
+            col = 'grey25', alpha=0.75) +
+  geom_line(data = LU,
+            aes(x, y),
+            lty = 1,
+            col = 'grey25', alpha=0.75) +
+  geom_linerange(aes(x = D - C, ymin = 0, ymax = LS),
+                 col='grey25', alpha=0.75) +
+  geom_linerange(aes(x = D + C, ymin = 0, ymax = US), 
+                 col='grey25', alpha=0.75) +
+  geom_segment(
+    data = NULL,
+    aes(
+      x = D - C,
+      xend = D,
+      y = minc - 1,
+      yend = minc - 1
+    ) ,
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  geom_segment(
+    data = NULL,
+    aes(
+      x = D ,
+      xend = D + C,
+      y = minc - 1,
+      yend = minc - 1
+    ) ,
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  geom_hline(yintercept = A + B,
+             col = 'grey25', alpha=0.75) +
+  geom_curve(
+    data = CV,
+    aes(
+      x = x[1],
+      xend = x[2],
+      y = y[1],
+      yend = y[2]
+    ),
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  annotate(
+    "text",
+    x = mean(T2$temp_f) + 7.5,
+    y = sum(CV$y) / 2 + 2,
+    label = "B/C"
+  ) +
+  annotate(
+    "text",
+    x = c(sum(D, D - C) / 2, sum(D, D + C) / 2),
+    y = c(minc + 5, minc + 5),
+    label = c("C", "C")
+  ) +
+  annotate("text",
+           x = D,
+           y = LS - 10,
+           label = "D") +
+  geom_segment(
+    aes(
+      x = mint + 5,
+      xend = mint + 5,
+      y = LS,
+      yend = A
+    ),
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  geom_segment(
+    aes(
+      x = mint + 5,
+      xend = mint + 5,
+      y = US,
+      yend = A
+    ),
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  annotate(
+    "text",
+    x = c(mint + 10, mint + 10),
+    y = c(mean(c(LS, A)), mean(c(US, A))),
+    label = c("B", "B")
+  ) +
+  annotate("text",
+           x = mint - 5,
+           y = A,
+           label = "A") #+
+  # annotate("text", x = D / 10, US + 10, label = "Upper Shelf:\nA + B") +
+  # annotate("text", x = D / 10, LS + 15, label = "Lower Shelf:\nA - B")
+
+```
+
+
+Solving the hyperbolic tangent for temperature:  
+$$ T = C \ tanh^{-1}\left(\frac{SA -A}{B}\right)+D$$  
+  
+Then setting the shear area to 85% in the temperature equation will give the TT. Since the model was fit based on whole numbers for percentages rather than decimal equivalent, the shear area is set to 85 rather than 0.85. If decimal equivalents are used to fit the model 0.85 would be used in the temperature equation.  
+
+```{r SA_coefs }
+tidy_sa <- tidy(fit_sa, conf.int = T)
+
+flextable::flextable(tidy_sa[, c(1:3, 6:7)]) %>%
+  flextable::colformat_double(digits = 2)%>% 
+  flextable::set_caption("Shear Area Model Results")
+```
+
+After fitting the model, extracting the coefficients and confidence intervals the LCI and UCI for transition temperature is arrived at:  
+$$
+\begin{align}
+&Transition \ Temperature \ Confidence \  Intervals: \\
+&UCI_{TT} = (conf.high_C) \ tanh^{-1}\left(\frac{85 - conf.low_A}{conf.low_B}\right)+conf.high_D\\
+&LCI_{TT} = (conf.low_C) \ tanh^{-1}\left(\frac{85 - conf.high_A}{conf.high_B}\right)+conf.low_D
+\end{align}
+$$
+
+## Plot of Transition Temperature with Confidence Intervals 
+```{r TT_w_uncertain}
+TT_LCI <- tidy_sa$conf.low[3] *
+  atanh(((85 - tidy_sa$conf.high[1]) / tidy_sa$conf.high[2])) +
+  tidy_sa$conf.low[4]
+
+TT_UCI <- tidy_sa$conf.high[3] *
+  atanh(((85 - tidy_sa$conf.low[1]) / tidy_sa$conf.low[2])) +
+  tidy_sa$conf.high[4]
+
+sa_high <- func(TT, tidy_sa$conf.high[1], tidy_sa$conf.high[2], tidy_sa$conf.low[3],tidy_sa$conf.low[4])
+sa_low <- func(TT, tidy_sa$conf.low[1], tidy_sa$conf.low[2], tidy_sa$conf.high[3],tidy_sa$conf.high[4])
+
+plt_sa +
+  geom_errorbarh(
+    aes(xmin = TT_LCI, xmax = TT_UCI, y = 85),
+    height = 5,
+    col = 'blue',
+    lwd = 0.9
+  ) +
+  geom_errorbar(aes(x = TT, ymin = sa_low, ymax = sa_high),
+                col = 'blue',
+                lwd = 0.9,
+                width =4)+
+  geom_point(aes(x = TT, y = 85),
+             col = 'blue', size=2) +
+  geom_segment(aes(
+    x = TT_LCI,
+    xend = TT_LCI,
+    y = 0,
+    yend = 85
+  ), lty = 2) +
+  geom_segment(aes(
+    x = TT_UCI,
+    xend = TT_UCI,
+    y = 0,
+    yend = 85
+  ), lty = 2) +
+  geom_segment(
+    aes(
+      x = TT_LCI,
+      xend = TT_UCI,
+      y = 12.5,
+      yend = 12.5
+    ),
+    arrow = arrow(
+      ends = "both",
+      type = "closed",
+      length = unit(0.075, "inches")
+    )
+  )+
+  annotate("text", 
+           label=paste("TT-CI:\n",floor(TT_LCI),"-",floor(TT_UCI)),
+           x=(TT_LCI+TT_UCI)/2, 
+           y=13)+
+  labs(title = "Transition Temperature Confidence Interval")
+  
+```
+
+## Hyperbolic Tangent Plot of CVN  
+```{r  plotcvn, fig.cap="Hyperbolic Tangent Parameters" }
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+
+LSE = min(data$cvn_ss_ft_lbs)
+
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+#make_plot(ids[idx])
+
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+params <-  tidy(fit,conf.int =T)
+coefs <- coef(fit)
+
+
+mtf <- min(data$temp_f)
+US <- params$estimate[1] + params$estimate[2]
+LS <- params$estimate[1] - params$estimate[2]
+T2 <- data %>% slice_max(order_by = cvn_ss_ft_lbs,n = 2) #top 2
+B2 <- data %>% slice_min(order_by = cvn_ss_ft_lbs,n = 2) #bottom 2
+slope <- params$estimate[2] / params$estimate[3] # slope of tangent
+
+A <- params$estimate[1]
+B <- params$estimate[2]
+C <- params$estimate[3]
+D <- params$estimate[4]
+
+AL <- mean(T2$temp_f-(D+C))#Arc length
+theta <- atan(slope) #Angle
+d <- AL *sin(theta) #vertical distance of arc
+l_prime <- AL*cos(theta) #Hztl. projection of arc
+
+plt <- data %>%
+  # rename(t = temp) %>%
+  ggplot(aes(temp_f, cvn_ss_ft_lbs)) +
+  geom_point() +
+  stat_function(fun = func,
+                args = list(coefs[1],
+                            coefs[2],
+                            coefs[3],
+                            coefs[4]), col='orangered') +
+  theme_minimal() +
+  annotate(
+    "text",
+    x = min(data$temp_f) + 5,
+    y = max(data$cvn_ss_ft_lbs) +10 ,
+    label = paste(
+      "A =",
+      round(coefs[1], 1),
+      ",B =",
+      round(coefs[2], 1),
+      ",C =",
+      round(coefs[3], 1),
+      ",D =",
+      round(coefs[4], 1)
+    ),
+    hjust = 0
+  ) +
+  labs(title = paste("ID =", ids[idx]))+
+  ylim(LS-7,50)+
+  labs(x ="Temperature (\u00B0F)", 
+       y ="Absorbed Energy (Ft-lbs.)")
+
+AD <- tibble(
+  x = c(mtf,
+        params$estimate[4],
+        params$estimate[4]),
+  y = c(params$estimate[1],
+        params$estimate[1],
+        0)
+)
+
+OD <- tibble(
+  x = c(
+    mtf,
+    D - C,
+    D + 1.5 * C
+  ),
+  y = c(
+    LS,
+    LS,
+    LS +
+      2.5 * C * slope
+  )
+)
+
+LU <-
+  tibble(
+    x = c(
+     D + C,
+      D + C
+    ),
+    y = c(LS-6, 
+         US)
+  )
+
+CV = tibble(x = c(mean(T2$temp_f), mean(T2$temp_f)-7.5),
+            y = c(US, US + slope*(mean(T2$temp_f)-7.5 - D - C)))
+
+minc <- min(data$cvn_ss_ft_lbs)
+mint <- min(data$temp_f)
+maxt <- max(data$temp_f)
+
+plt +
+  geom_line(data = AD,
+            aes(x, y),
+            lty = 2,
+            col = 'grey25', alpha=0.75) +
+  geom_line(data = OD,
+            aes(x, y),
+            lty = 1,
+            col = 'grey25', alpha=0.75) +
+  geom_line(data = LU,
+            aes(x, y),
+            lty = 1,
+            col = 'grey25', alpha=0.75) +
+  geom_linerange(aes(x = D - C, ymin = 0, ymax = LS),
+                 col='grey25', alpha=0.75) +
+  geom_linerange(aes(x = D + C, ymin = 0, ymax = US), 
+                 col='grey25', alpha=0.75) +
+  geom_segment(
+    data = NULL,
+    aes(
+      x = D - C,
+      xend = D,
+      y = minc - 1,
+      yend = minc - 1
+    ) ,
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  geom_segment(
+    data = NULL,
+    aes(
+      x = D ,
+      xend = D + C,
+      y = minc - 1,
+      yend = minc - 1
+    ) ,
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  geom_hline(yintercept = A + B,
+             col = 'grey25', alpha=0.75) +
+  geom_curve(
+    data = CV,
+    aes(
+      x = x[1],
+      xend = x[2],
+      y = y[1],
+      yend = y[2]
+    ),
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  annotate(
+    "text",
+    x = mean(T2$temp_f) + 7.5,
+    y = sum(CV$y) / 2 + 2,
+    label = "B/C"
+  ) +
+  annotate(
+    "text",
+    x = c(sum(D, D - C) / 2, sum(D, D + C) / 2),
+    y = c(minc + 1, minc + 1),
+    label = c("C", "C")
+  ) +
+  annotate("text",
+           x = D,
+           y = LS - 5,
+           label = "D") +
+  geom_segment(
+    aes(
+      x = mint + 5,
+      xend = mint + 5,
+      y = LS,
+      yend = A
+    ),
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  geom_segment(
+    aes(
+      x = mint + 5,
+      xend = mint + 5,
+      y = US,
+      yend = A
+    ),
+    arrow = arrow(
+      ends = "both",
+      length = unit(0.075, "inches"),
+      type = "closed"
+    )
+  ) +
+  annotate(
+    "text",
+    x = c(mint + 10, mint + 10),
+    y = c(mean(c(LS, A)), mean(c(US, A))),
+    label = c("B", "B")
+  ) +
+  annotate("text",
+           x = mint - 5,
+           y = A,
+           label = "A") +
+  annotate("text", x = D / 10, US + 4, label = "Upper Shelf:\nA + B") +
+  annotate("text", x = D / 10, LS + 5, label = "Lower Shelf:\nA - B")
+
+
+```
+
+## Uncertainty in Estimates  
+The coefficients from the model are the maximum likelihood estimates for the parameters. Given that the model results are an a best estimate based on the data and that exact curve is unknown, there is uncertainty in the parameters that can be extracted from the model that fit them in the form of confidence intervals. The estimates are the average prediction for the parameters and the confidence intervals are a statement about the precision of that estimate.   
+   
+Note the size of the standard errors for the parameters A and B compared to C and D. This is an indications that based on the data and model fit, the width of the uncertainty for the upper and lower shelf will be much smaller than for the transition region. If data was collected at more of the intermediate temperatures through this region this uncertainty would likely be reduced.
+
+```{r uncertainty}
+cvn_aug <- augment(fit, interval = "confidence")
+
+perf <- glance(fit)
+
+coefs <- coef(fit)
+
+shelf <- c(coefs[1] + coefs[2], coefs[1] - coefs[2])
+
+.upper <- c(params$conf.high[1] + params$conf.high[2],
+            params$conf.low[1] - params$conf.low[2])
+
+.lower <- c(params$conf.low[1] + params$conf.low[2],
+            params$conf.high[1] - params$conf.high[2])
+
+name <- c("Upper", "Lower")
+
+usls <- tibble(name, shelf, .upper, .lower, temp = c(maxt, mint))
+
+flextable::flextable(params[c(1:3,6:7)]) %>% 
+  flextable::colformat_double(digits = 2) %>% 
+  flextable::set_caption("CVN Model Results")
+```
+The upper shelf (US) is calculated as the parameters A + B and the lower shelf (LS) is A - B and since we have the upper and lower confidence intervals (CI) for the parameters we can derive the upper and lower shelf CI's. The blue and green curves represent the confidence interval for the model. The confidence intervals cross since the *tanh* function changes sign when $T-D<0$. The greatest uncertainty is going to be at the upper shelf and since the lower shelf is constrained by zero it narrow significantly. 
+
+$$
+\begin{aligned}
+&Upper \ and \ Lower \ Shelf \ Confidence \ Intervals: \\
+&UCI_{US} = conf.high_A + conf.high_B\\
+&LCI_{US} = conf.low_A + conf.low_B\\
+&UCI_{LS} = conf.low_A - conf.low_B\\
+&LCI_{LS} = conf.high_A - conf.high_B\\
+\end{aligned}
+$$
+
+```{r ci_plot, fig.cap="Upper and Lower Shelf Confidence Intervals"}
+A <- params$estimate[1]
+B <- params$estimate[2]
+C <- params$estimate[3]
+D <- params$estimate[4]
+
+uslsCI <- tibble(
+  t = seq(mint, maxt,
+          length.out = 500),
+  cvn = func(t, A, B, C, D),
+  upper_PI = cvn + 1.96 * perf$sigma,
+  lower_PI = ifelse(cvn - 1.96 * perf$sigma < 0, 0, 
+                    cvn - 1.96 * perf$sigma)
+) %>%
+  pivot_longer(cols = upper_PI:lower_PI)
+
+usls %>%  
+  ggplot()+
+  # geom_point(aes(x = temp, y = shelf),
+  #            size = 2,
+  #            col = 'blue') +
+  geom_errorbar(aes(x = temp, ymin = .lower, ymax =.upper), 
+                width =4, 
+                col='blue',
+                lwd = 0.7)+
+  labs(title = "Confidence Intervals for Upper and Lower Shelf",
+       y = "CVN (ft-lbs)",
+       x = "Shelf")+
+  geom_point(data = data, aes(temp_f, cvn_ss_ft_lbs)) +
+  stat_function(data = data, fun = func,
+                args = list(coefs[1],
+                            coefs[2],
+                            coefs[3],
+                            coefs[4]), col='orangered') +
+  # stat_function(data = data, fun = func,
+  #               args = list(params$conf.high[1],
+  #                           params$conf.high[2],
+  #                           params$conf.low[3],
+  #                           params$conf.high[4]), col='blue') +
+  # stat_function(data = data, fun = func,
+  #               args = list(params$conf.low[1],
+  #                           params$conf.low[2],
+  #                           params$conf.high[3],
+  #                           params$conf.low[4]), col='green') +
+   # stat_function(data = data, fun = func,
+   #              args = list(params$conf.high[1],
+   #                          params$conf.high[2],
+   #                          params$estimate[3],
+   #                          params$estimate[4]), col='purple', lwd=1.1) +
+   # stat_function(data = data, fun = func,
+   #              args = list(params$conf.low[1],
+   #                          params$conf.low[2],
+   #                          params$estimate[3],
+   #                          params$estimate[4]), col='purple', lwd=1.1) +
+geom_line(data = uslsCI,aes(x =t, y = value, col=name),lwd=1)+
+  theme_minimal() +
+  annotate(
+    "text",
+    x = min(data$temp_f) + 5,
+    y = max(data$cvn_ss_ft_lbs) +10 ,
+    label = paste(
+      "A =",
+      round(coefs[1], 1),
+      ",B =",
+      round(coefs[2], 1),
+      ",C =",
+      round(coefs[3], 1),
+      ",D =",
+      round(coefs[4], 1)
+    ),
+    hjust = 0
+  ) +
+  labs(title = paste("ID =", ids[idx]))+
+  ylim(0,50)+
+  labs(x ="Temperature (\u00B0F)", 
+       y ="Absorbed Energy (Ft-lbs.)",
+       title = "Upper and Lower Shelf With Uncertainty")+
+  geom_segment(aes(x=mint, xend = 75, y = LS, yend =LS), lty=2)+
+  geom_segment(aes(x=maxt, xend = maxt - 75, y = US, yend =US), lty=2)+
+  annotate("text", x=c(75,maxt-75), y = c(LS, US),label = c("LS", "US"), hjust = c(-0.75,1.5))
+```
+
+## Shear Area Plots 
+```{r plot_sa}
+
+sa_index <- c(1,2,6,7,8,9,10,13,14,15,17,21,23,24,27,28,29,30,31,32,33,34,37,38,39,40,41,42,43,44,45,46,49,52,53,55,56)
+for(idx in sa_index){
+  data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(sa_ss,4,fill = NA),
+         slope = (mean_cvn - first(sa_ss)) / (mean_t - first(temp_f)))
+
+USE = max(data$sa_ss) #UPPER SHELF ENERGY
+LSE = min(data$sa_ss)
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% 
+  filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% 
+  filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+fit <-
+  nls(
+    sa_ss ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+
+print(make_plot3(ids[idx],coefs[1], coefs[2],coefs[3], coefs[4]))
+
+}
+
+```
+
+
+##  Absorbed Energy Plots  
+
+```{r plot_cvn}
+
+cvn_index <- c(1,2,3,6,7,9,13,14,17,21,23,24,25,27,28,29,31,32,34,36,37,38,39,40,41,42,43,44,45,46,50,52,53,55)
+for(idx in cvn_index){
+data <- tim_cvn %>% 
+  filter(id==ids[idx]) %>% 
+  mutate(mean_t = rollmean(temp_f,4,fill = NA), 
+         mean_cvn = rollmean(cvn_ss_ft_lbs,4,fill = NA),
+         slope = (mean_cvn - first(cvn_ss_ft_lbs)) / (mean_t - first(temp_f)))
+
+count <- data %>% count(bar_orientation)
+
+
+USE = max(data$cvn_ss_ft_lbs) #UPPER SHELF ENERGY
+LSE = min(data$cvn_ss_ft_lbs)
+
+Ai <- (USE + LSE)/2
+Bi <- (USE - LSE)/2
+Ci <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  mutate(bc = Bi/slope)
+Ci = Ci$bc
+Di <- data %>% filter(slope == max(slope, na.rm = TRUE)) %>% 
+  select(mean_t)
+Di = Di$mean_t
+
+fit <-
+  nls(
+    cvn_ss_ft_lbs ~ func(temp_f, A, B, C, D),
+    data = data ,
+    start = list(
+      A = Ai,
+      B = Bi,
+      C = Ci,
+      D = Di
+    ),
+    trace = F
+  )
+
+coefs <- coef(fit)
+
+print(make_plot2(ids[idx],coefs[1], coefs[2],coefs[3], coefs[4]))
+
+}
+```
